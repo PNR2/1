@@ -1,0 +1,30 @@
+name: Build Extensions
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build APKs
+    runs-on: ubuntu-latest
+    steps:
+      - name: Clone Repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: 17
+          distribution: 'temurin'
+
+      - name: Make Gradle executable
+        run: chmod +x ./gradlew
+
+      - name: Build Extensions
+        run: ./gradlew assembleDebug
+
+      - name: Upload APKs
+        uses: actions/upload-artifact@v4
+        with:
+          name: senmanga-extension-apk
+          path: "**/build/outputs/apk/**/*.apk"
