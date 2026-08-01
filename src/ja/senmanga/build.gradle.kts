@@ -1,8 +1,17 @@
-ext {
-    extName = "SenManga"
-    extClass = ".SenManga"
-    extVersionCode = 1
-    isNsfw = false
+import io.github.keiyoushi.gradle.api.ContentWarning
+
+plugins {
+    alias(kei.plugins.extension)
 }
 
-apply(from = "$rootDir/common.gradle")
+keiyoushi {
+    name = "Sen Manga"
+    versionCode = 8
+    contentWarning = ContentWarning.MIXED
+    libVersion = "1.4"
+
+    source {
+        lang = "ja"
+        baseUrl = "https://senmanga.com/updates"
+    }
+}
