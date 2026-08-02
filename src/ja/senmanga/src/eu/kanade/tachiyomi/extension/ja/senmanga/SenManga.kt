@@ -17,16 +17,16 @@ import java.text.SimpleDateFormat
 import java.util.Locale
 
 @Source
-class SenManga : KeiSource() {
-
-    override val name: String = "SenManga"
-    override val baseUrl: String = "https://senmanga.com"
-    override val lang: String = "ja"
-    override val id: Long = 8527391823471923L
+class SenManga(
+    override val name: String = "SenManga",
+    override val baseUrl: String = "https://senmanga.com",
+    override val lang: String = "ja",
+    override val id: Long = 8527391823471923L,
+) : KeiSource() {
 
     override val supportsLatest = true
 
-    // Correct KeiSource header override syntax
+    // Disguise Mihon as a standard Chrome Desktop browser to bypass bot-checks
     override val headers: Headers = super.headersBuilder()
         .set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36")
         .set("Referer", "$baseUrl/")
