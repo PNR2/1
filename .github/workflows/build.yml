@@ -23,7 +23,7 @@ jobs:
         run: chmod +x ./gradlew
 
       - name: Build Extensions
-        run: ./gradlew spotlessApply assembleDebug
+        run: ./gradlew :src:ja:senmanga:spotlessApply :src:ja:senmanga:assembleDebug
 
       - name: Upload APKs
         uses: actions/upload-artifact@v4
