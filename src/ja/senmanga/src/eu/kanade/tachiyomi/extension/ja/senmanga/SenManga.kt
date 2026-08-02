@@ -6,24 +6,17 @@ import eu.kanade.tachiyomi.source.model.MangasPage
 import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.source.model.SChapter
 import eu.kanade.tachiyomi.source.model.SManga
+import eu.kanade.tachiyomi.source.model.SMangaUpdate
 import keiyoushi.annotation.Source
 import keiyoushi.source.KeiSource
-import keiyoushi.source.model.SMangaUpdate
-import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
-import okhttp3.Request
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import java.text.SimpleDateFormat
 import java.util.Locale
 
 @Source
-class SenManga(
-    override val lang: String = "ja",
-    override val id: Long = 8527391823471923L,
-) : KeiSource() {
-
-    override val name = "SenManga"
-    override val baseUrl = "https://senmanga.com"
+class SenManga : KeiSource() {
 
     override val supportsLatest = true
 
@@ -45,7 +38,7 @@ class SenManga(
 
     // ================== Search ==================
     override suspend fun getSearchMangaList(page: Int, query: String, filters: FilterList): MangasPage {
-        val url = "$baseUrl/search".toHttpUrlOrNull()!!.newBuilder()
+        val url = "$baseUrl/search".toHttpUrl().newBuilder()
             .addQueryParameter("q", query)
             .addQueryParameter("page", page.toString())
             .build()
@@ -70,7 +63,7 @@ class SenManga(
         return MangasPage(mangas, hasNextPage)
     }
 
-    // ================== Manga Details ==================
+    // ================== Manga Details & Chapters ==================
     override suspend fun fetchMangaUpdate(
         manga: SManga,
         chapters: List<SChapter>,
