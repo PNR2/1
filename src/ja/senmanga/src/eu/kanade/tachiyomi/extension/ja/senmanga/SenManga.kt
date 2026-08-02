@@ -135,3 +135,4 @@ class SenManga(
             Page(index, "", imageUrl)
         }
     }
+}
