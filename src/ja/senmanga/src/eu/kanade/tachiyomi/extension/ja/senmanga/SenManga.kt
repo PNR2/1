@@ -69,7 +69,7 @@ class SenManga : ParsedHttpSource() {
             artist = document.select("ul.series-info li:contains(Artist) a").text()
             genre = document.select("ul.series-info li:contains(Genre) a").joinToString(", ") { it.text() }
             description = document.selectFirst("div.summary")?.text()?.trim()
-            
+
             val statusText = document.select("ul.series-info li:contains(Status)").text()
             status = when {
                 statusText.contains("Ongoing", ignoreCase = true) -> SManga.ONGOING
@@ -87,7 +87,7 @@ class SenManga : ParsedHttpSource() {
             val link = element.selectFirst("a")!!
             name = link.text().trim()
             setUrlWithoutDomain(link.attr("href"))
-            
+
             val dateText = element.selectFirst("time")?.text() ?: ""
             date_upload = parseDate(dateText)
         }
