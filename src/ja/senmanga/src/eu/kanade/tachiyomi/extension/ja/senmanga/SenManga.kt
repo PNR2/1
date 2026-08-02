@@ -27,11 +27,10 @@ class SenManga(
     override val supportsLatest = true
 
     // Disguise Mihon as a standard Chrome Desktop browser to bypass bot-checks
-    override val headers: Headers = super.headersBuilder()
-        .set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36")
-        .set("Referer", "$baseUrl/")
-        .set("Accept-Language", "en-US,en;q=0.9")
-        .build()
+    override fun Headers.Builder.configureHeaders(): Headers.Builder {
+        return this.set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36")
+            .set("Accept-Language", "en-US,en;q=0.9")
+    }
 
     // ================== Popular / Browse ==================
     override suspend fun getPopularManga(page: Int): MangasPage {
