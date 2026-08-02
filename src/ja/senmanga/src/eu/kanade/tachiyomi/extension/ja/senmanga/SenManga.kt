@@ -30,9 +30,6 @@ class SenManga(
 
     private val apiUrl = "$baseUrl/api"
 
-    override fun headersBuilder() = super.headersBuilder()
-        .add("Referer", "$baseUrl/")
-
     // ================== Popular / Browse ==================
     override suspend fun getPopularManga(page: Int): MangasPage {
         val request = GET("$apiUrl/directory?order=Popular&page=$page", headers)
