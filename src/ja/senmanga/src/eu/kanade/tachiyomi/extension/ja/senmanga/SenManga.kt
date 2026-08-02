@@ -16,7 +16,10 @@ import java.text.SimpleDateFormat
 import java.util.Locale
 
 @Source
-class SenManga : KeiSource() {
+class SenManga(
+    override val lang: String = "ja",
+    override val id: Long = 8527391823471923L,
+) : KeiSource() {
 
     override val supportsLatest = true
 
