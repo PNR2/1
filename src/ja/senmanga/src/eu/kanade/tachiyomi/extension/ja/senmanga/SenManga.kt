@@ -8,6 +8,7 @@ import eu.kanade.tachiyomi.source.model.SChapter
 import eu.kanade.tachiyomi.source.model.SManga
 import keiyoushi.annotation.Source
 import keiyoushi.source.KeiSource
+import keiyoushi.source.model.SMangaUpdate
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.Request
 import org.jsoup.Jsoup
@@ -43,7 +44,7 @@ class SenManga(
     }
 
     // ================== Search ==================
-    override suspend fun getSearchManga(page: Int, query: String, filters: FilterList): MangasPage {
+    override suspend fun getSearchMangaList(page: Int, query: String, filters: FilterList): MangasPage {
         val url = "$baseUrl/search".toHttpUrlOrNull()!!.newBuilder()
             .addQueryParameter("q", query)
             .addQueryParameter("page", page.toString())
@@ -70,44 +71,53 @@ class SenManga(
     }
 
     // ================== Manga Details ==================
-    override suspend fun getMangaDetails(manga: SManga): SManga {
+    override suspend fun fetchMangaUpdate(
+        manga: SManga,
+        chapters: List<SChapter>,
+        fetchDetails: Boolean,
+        fetchChapters: Boolean,
+    ): SMangaUpdate {
         val request = GET(baseUrl + manga.url, headers)
         val response = client.newCall(request).execute()
         val document = Jsoup.parse(response.body.string(), baseUrl)
 
-        return SManga.create().apply {
-            title = document.selectFirst("h1.series-title")?.text()?.trim() ?: ""
-            thumbnail_url = document.selectFirst("div.cover img")?.attr("src")
-            author = document.select("ul.series-info li:contains(Author) a").text()
-            artist = document.select("ul.series-info li:contains(Artist) a").text()
-            genre = document.select("ul.series-info li:contains(Genre) a").joinToString(", ") { it.text() }
-            description = document.selectFirst("div.summary")?.text()?.trim()
+        val updatedManga = if (fetchDetails) {
+            SManga.create().apply {
+                url = manga.url
+                title = document.selectFirst("h1.series-title")?.text()?.trim() ?: ""
+                thumbnail_url = document.selectFirst("div.cover img")?.attr("src")
+                author = document.select("ul.series-info li:contains(Author) a").text()
+                artist = document.select("ul.series-info li:contains(Artist) a").text()
+                genre = document.select("ul.series-info li:contains(Genre) a").joinToString(", ") { it.text() }
+                description = document.selectFirst("div.summary")?.text()?.trim()
 
-            val statusText = document.select("ul.series-info li:contains(Status)").text()
-            status = when {
-                statusText.contains("Ongoing", ignoreCase = true) -> SManga.ONGOING
-                statusText.contains("Completed", ignoreCase = true) -> SManga.COMPLETED
-                else -> SManga.UNKNOWN
+                val statusText = document.select("ul.series-info li:contains(Status)").text()
+                status = when {
+                    statusText.contains("Ongoing", ignoreCase = true) -> SManga.ONGOING
+                    statusText.contains("Completed", ignoreCase = true) -> SManga.COMPLETED
+                    else -> SManga.UNKNOWN
+                }
             }
+        } else {
+            null
         }
-    }
 
-    // ================== Chapters ==================
-    override suspend fun getChapterList(manga: SManga): List<SChapter> {
-        val request = GET(baseUrl + manga.url, headers)
-        val response = client.newCall(request).execute()
-        val document = Jsoup.parse(response.body.string(), baseUrl)
+        val updatedChapters = if (fetchChapters) {
+            document.select("ul.chapter-list li").map { element ->
+                SChapter.create().apply {
+                    val link = element.selectFirst("a")!!
+                    name = link.text().trim()
+                    setUrlWithoutDomain(link.attr("href"))
 
-        return document.select("ul.chapter-list li").map { element ->
-            SChapter.create().apply {
-                val link = element.selectFirst("a")!!
-                name = link.text().trim()
-                setUrlWithoutDomain(link.attr("href"))
-
-                val dateText = element.selectFirst("time")?.text() ?: ""
-                date_upload = parseDate(dateText)
+                    val dateText = element.selectFirst("time")?.text() ?: ""
+                    date_upload = parseDate(dateText)
+                }
             }
+        } else {
+            null
         }
+
+        return SMangaUpdate(manga = updatedManga, chapters = updatedChapters)
     }
 
     private fun parseDate(dateStr: String): Long = try {
