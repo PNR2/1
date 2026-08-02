@@ -44,7 +44,7 @@ class SenManga(
     // ================== Search ==================
     override suspend fun getSearchMangaList(page: Int, query: String, filters: FilterList): MangasPage {
         val url = "$baseUrl/search".toHttpUrl().newBuilder()
-            .addQueryParameter("q", query)
+            .addQueryParameter("title", query)
             .addQueryParameter("page", page.toString())
             .build()
         val request = GET(url, headers)
@@ -54,20 +54,21 @@ class SenManga(
     }
 
     private fun parseMangasPage(document: Document): MangasPage {
-        val mangaElements = document.select("div.item, div.manga-entry, div.item-manga, div.list-upd div.item")
+        // Updated to match the exact HTML classes provided
+        val mangaElements = document.select("div.manga-card")
         val mangas = mangaElements.mapNotNull { element ->
-            val linkElement = element.selectFirst("a.series-title, h3 a, h2 a, a[href*='/manga/'], div.info a")
-                ?: return@mapNotNull null
+            val linkElement = element.selectFirst("a") ?: return@mapNotNull null
+            val titleElement = element.selectFirst("div.title") ?: return@mapNotNull null
 
             SManga.create().apply {
-                title = linkElement.text().trim()
+                title = titleElement.text().trim()
                 setUrlWithoutDomain(linkElement.attr("href"))
-                thumbnail_url = element.selectFirst("img")?.let { img ->
-                    img.attr("src").ifEmpty { img.attr("data-src") }
-                }
+                thumbnail_url = element.selectFirst("img")?.attr("src")
             }
         }
-        val hasNextPage = document.selectFirst("ul.pagination li:last-child:not(.disabled) a, a.next, a[rel='next']") != null
+        
+        // Updated to match the pagination structure provided
+        val hasNextPage = document.selectFirst("ul.pagination li a[rel=next]") != null
         return MangasPage(mangas, hasNextPage)
     }
 
@@ -85,6 +86,7 @@ class SenManga(
         val updatedManga = if (fetchDetails) {
             SManga.create().apply {
                 url = manga.url
+                // General selectors that cover most Next.js generated template classes
                 title = document.selectFirst("h1.series-title, h1.title, h1")?.text()?.trim() ?: manga.title
                 thumbnail_url = document.selectFirst("div.cover img, div.thumb img, img.cover")?.attr("src") ?: manga.thumbnail_url
                 author = document.select("ul.series-info li:contains(Author) a, div.author a").text().ifEmpty { manga.author }
