@@ -1,4 +1,3 @@
-
 package eu.kanade.tachiyomi.extension.ja.senmanga
 
 import eu.kanade.tachiyomi.network.GET
@@ -12,6 +11,10 @@ import java.text.SimpleDateFormat
 import java.util.Locale
 
 class SenManga : ParsedHttpSource() {
+
+    override val name = "SenManga"
+    override val baseUrl = "https://senmanga.com"
+    override val lang = "ja"
 
     override val supportsLatest = true
 
