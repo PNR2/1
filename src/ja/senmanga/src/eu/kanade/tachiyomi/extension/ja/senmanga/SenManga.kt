@@ -9,6 +9,7 @@ import eu.kanade.tachiyomi.source.model.SManga
 import eu.kanade.tachiyomi.source.model.SMangaUpdate
 import keiyoushi.annotation.Source
 import keiyoushi.source.KeiSource
+import okhttp3.Headers
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
@@ -25,9 +26,14 @@ class SenManga(
 
     override val supportsLatest = true
 
+    // Disguise Mihon as a standard Chrome Desktop browser to bypass bot-checks
+    override fun headersBuilder(): Headers.Builder = super.headersBuilder()
+        .set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36")
+        .set("Referer", "$baseUrl/")
+        .set("Accept-Language", "en-US,en;q=0.9")
+
     // ================== Popular / Browse ==================
     override suspend fun getPopularManga(page: Int): MangasPage {
-        // Uses the directory page but forcefully sorts it by Popular
         val request = GET("$baseUrl/directory?Order=Popular&page=$page", headers)
         val response = client.newCall(request).execute()
         val document = Jsoup.parse(response.body.string(), baseUrl)
@@ -36,7 +42,6 @@ class SenManga(
 
     // ================== Latest ==================
     override suspend fun getLatestUpdates(page: Int): MangasPage {
-        // Points exactly to the updates page 
         val request = GET("$baseUrl/updates?page=$page", headers)
         val response = client.newCall(request).execute()
         val document = Jsoup.parse(response.body.string(), baseUrl)
@@ -45,7 +50,6 @@ class SenManga(
 
     // ================== Search ==================
     override suspend fun getSearchMangaList(page: Int, query: String, filters: FilterList): MangasPage {
-        // Uses the directory page and the 'title' parameter from their search box
         val url = "$baseUrl/directory".toHttpUrl().newBuilder()
             .addQueryParameter("title", query)
             .addQueryParameter("page", page.toString())
@@ -67,7 +71,6 @@ class SenManga(
             SManga.create().apply {
                 title = titleElement.text().trim()
                 setUrlWithoutDomain(linkElement.attr("href"))
-                // Using abs:src ensures relative URLs like /api/proxy... are fully formed
                 thumbnail_url = element.selectFirst("img")?.attr("abs:src")
             }
         }
