@@ -12,16 +12,17 @@ import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.Request
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
-import org.jsoup.nodes.Element
 import java.text.SimpleDateFormat
 import java.util.Locale
 
 @Source
-class SenManga : KeiSource() {
+class SenManga(
+    override val lang: String = "ja",
+    override val id: Long = 8527391823471923L,
+) : KeiSource() {
 
     override val name = "SenManga"
     override val baseUrl = "https://senmanga.com"
-    override val lang = "ja"
 
     override val supportsLatest = true
 
