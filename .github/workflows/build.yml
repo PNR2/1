@@ -21,7 +21,7 @@ jobs:
         run: chmod +x ./gradlew
 
       - name: Build Extensions
-        run: ./gradlew assembleDebug
+        run: ./gradlew spotlessApply assembleDebug
 
       - name: Upload APKs
         uses: actions/upload-artifact@v4
