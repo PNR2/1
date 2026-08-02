@@ -106,28 +106,4 @@ class SenManga : ParsedHttpSource() {
         }
 
     override fun imageUrlParse(document: Document): String = ""
-}            setUrlWithoutDomain(link.attr("href"))
-
-            val dateText = element.selectFirst("time")?.text() ?: ""
-            date_upload = parseDate(dateText)
-        }
-    }
-
-    private fun parseDate(dateStr: String): Long {
-        return try {
-            SimpleDateFormat("MMM dd, yyyy", Locale.ENGLISH).parse(dateStr)?.time ?: 0L
-        } catch (e: Exception) {
-            0L
-        }
-    }
-
-    // ================== Page List (Images) ==================
-    override fun pageListParse(document: Document): List<Page> {
-        return document.select("div.reader-page img").mapIndexed { index, img ->
-            val imageUrl = img.attr("src").ifEmpty { img.attr("data-src") }
-            Page(index, "", imageUrl)
-        }
-    }
-
-    override fun imageUrlParse(document: Document): String = ""
 }
