@@ -7,6 +7,7 @@ plugins {
 keiyoushi {
     name = "SenManga"
     versionCode = 1
+    libVersion = "1.6"
     contentWarning = ContentWarning.SAFE
     
     source {
