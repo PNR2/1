@@ -9,11 +9,14 @@ import eu.kanade.tachiyomi.source.model.SManga
 import eu.kanade.tachiyomi.source.model.SMangaUpdate
 import keiyoushi.annotation.Source
 import keiyoushi.source.KeiSource
+import keiyoushi.utils.parseAs
+import keiyoushi.utils.tryParse
+import kotlinx.serialization.SerialName
+import kotlinx.serialization.Serializable
 import okhttp3.HttpUrl.Companion.toHttpUrl
-import org.jsoup.Jsoup
-import org.jsoup.nodes.Document
 import java.text.SimpleDateFormat
 import java.util.Locale
+import java.util.TimeZone
 
 @Source
 class SenManga(
@@ -25,47 +28,48 @@ class SenManga(
 
     override val supportsLatest = true
 
+    private val apiUrl = "$baseUrl/api"
+
+    override fun headersBuilder() = super.headersBuilder()
+        .add("Referer", "$baseUrl/")
+
     // ================== Popular / Browse ==================
     override suspend fun getPopularManga(page: Int): MangasPage {
-        val request = GET("$baseUrl/directory/popular?page=$page", headers)
+        val request = GET("$apiUrl/directory?order=Popular&page=$page", headers)
         val response = client.newCall(request).execute()
-        val document = Jsoup.parse(response.body.string(), baseUrl)
-        return parseMangasPage(document)
+        val data = response.parseAs<DirectoryResponse>()
+        val mangas = data.series.map { it.toSManga() }
+        val hasNext = (data.currentPage ?: 1) < (data.totalPages ?: 1)
+
+        return MangasPage(mangas, hasNext)
     }
 
     // ================== Latest ==================
     override suspend fun getLatestUpdates(page: Int): MangasPage {
-        val request = GET("$baseUrl/directory/last_update?page=$page", headers)
+        val request = GET("$apiUrl/home?page=$page", headers)
         val response = client.newCall(request).execute()
-        val document = Jsoup.parse(response.body.string(), baseUrl)
-        return parseMangasPage(document)
+        val data = response.parseAs<HomeResponse>()
+        val mangas = data.series.map { it.toSManga() }
+
+        return MangasPage(mangas, mangas.isNotEmpty())
     }
 
     // ================== Search ==================
     override suspend fun getSearchMangaList(page: Int, query: String, filters: FilterList): MangasPage {
-        val url = "$baseUrl/search".toHttpUrl().newBuilder()
-            .addQueryParameter("q", query)
+        val url = "$apiUrl/directory".toHttpUrl().newBuilder()
             .addQueryParameter("page", page.toString())
-            .build()
-        val request = GET(url, headers)
-        val response = client.newCall(request).execute()
-        val document = Jsoup.parse(response.body.string(), baseUrl)
-        return parseMangasPage(document)
-    }
 
-    private fun parseMangasPage(document: Document): MangasPage {
-        val mangas = document.select("div.item").map { element ->
-            SManga.create().apply {
-                val titleElement = element.selectFirst("a.series-title")!!
-                title = titleElement.text().trim()
-                setUrlWithoutDomain(titleElement.attr("href"))
-                thumbnail_url = element.selectFirst("img")?.let { img ->
-                    img.attr("src").ifEmpty { img.attr("data-src") }
-                }
-            }
+        if (query.isNotBlank()) {
+            url.addQueryParameter("s", query)
         }
-        val hasNextPage = document.selectFirst("ul.pagination li:last-child:not(.disabled) a") != null
-        return MangasPage(mangas, hasNextPage)
+
+        val request = GET(url.build(), headers)
+        val response = client.newCall(request).execute()
+        val data = response.parseAs<DirectoryResponse>()
+        val mangas = data.series.map { it.toSManga() }
+        val hasNext = (data.currentPage ?: 1) < (data.totalPages ?: 1)
+
+        return MangasPage(mangas, hasNext)
     }
 
     // ================== Manga Details & Chapters ==================
@@ -75,42 +79,25 @@ class SenManga(
         fetchDetails: Boolean,
         fetchChapters: Boolean,
     ): SMangaUpdate {
-        val request = GET(baseUrl + manga.url, headers)
+        val request = GET("$apiUrl/manga/${manga.url}", headers)
         val response = client.newCall(request).execute()
-        val document = Jsoup.parse(response.body.string(), baseUrl)
+        val data = response.parseAs<SeriesDto>()
 
         val updatedManga = if (fetchDetails) {
-            SManga.create().apply {
-                url = manga.url
-                title = document.selectFirst("h1.series-title")?.text()?.trim() ?: manga.title
-                thumbnail_url = document.selectFirst("div.cover img")?.attr("src") ?: manga.thumbnail_url
-                author = document.select("ul.series-info li:contains(Author) a").text().ifEmpty { manga.author }
-                artist = document.select("ul.series-info li:contains(Artist) a").text().ifEmpty { manga.artist }
-                genre = document.select("ul.series-info li:contains(Genre) a").joinToString(", ") { it.text() }.ifEmpty { manga.genre }
-                description = document.selectFirst("div.summary")?.text()?.trim() ?: manga.description
-
-                val statusText = document.select("ul.series-info li:contains(Status)").text()
-                status = when {
-                    statusText.contains("Ongoing", ignoreCase = true) -> SManga.ONGOING
-                    statusText.contains("Completed", ignoreCase = true) -> SManga.COMPLETED
-                    else -> manga.status
-                }
-            }
+            data.toSManga()
         } else {
             manga
         }
 
         val updatedChapters = if (fetchChapters) {
-            document.select("ul.chapter-list li").map { element ->
+            val mangaSlug = data.slug
+            data.chapterList?.map { chapter ->
                 SChapter.create().apply {
-                    val link = element.selectFirst("a")!!
-                    name = link.text().trim()
-                    setUrlWithoutDomain(link.attr("href"))
-
-                    val dateText = element.selectFirst("time")?.text() ?: ""
-                    date_upload = parseDate(dateText)
+                    url = "$mangaSlug/${chapter.url}"
+                    name = chapter.title
+                    date_upload = dateFormat.tryParse(chapter.datetime)
                 }
-            }
+            } ?: emptyList()
         } else {
             chapters
         }
@@ -118,21 +105,81 @@ class SenManga(
         return SMangaUpdate(manga = updatedManga, chapters = updatedChapters)
     }
 
-    private fun parseDate(dateStr: String): Long = try {
-        SimpleDateFormat("MMM dd, yyyy", Locale.ENGLISH).parse(dateStr)?.time ?: 0L
-    } catch (e: Exception) {
-        0L
-    }
-
     // ================== Page List (Images) ==================
     override suspend fun getPageList(chapter: SChapter): List<Page> {
-        val request = GET(baseUrl + chapter.url, headers)
+        val request = GET("$apiUrl/read/${chapter.url}", headers)
         val response = client.newCall(request).execute()
-        val document = Jsoup.parse(response.body.string(), baseUrl)
+        val data = response.parseAs<ReadResponse>()
+        return data.pages.mapIndexed { index, imageUrl ->
+            Page(index, imageUrl = imageUrl)
+        }
+    }
 
-        return document.select("div.reader-page img").mapIndexed { index, img ->
-            val imageUrl = img.attr("src").ifEmpty { img.attr("data-src") }
-            Page(index, "", imageUrl)
+    override fun getMangaUrl(manga: SManga) = "$baseUrl/manga/${manga.url}"
+
+    override fun getChapterUrl(chapter: SChapter): String {
+        val mangaSlug = chapter.url.substringBefore("/")
+        val chapterSlug = chapter.url.substringAfter("/")
+        return "$baseUrl/manga/$mangaSlug/chapter-$chapterSlug/"
+    }
+}
+
+private val dateFormat by lazy {
+    SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.ROOT).apply {
+        timeZone = TimeZone.getTimeZone("UTC")
+    }
+}
+
+// ================== JSON Data Transfer Objects ==================
+
+@Serializable
+private class DirectoryResponse(
+    val series: List<SeriesDto> = emptyList(),
+    @SerialName("current_page") val currentPage: Int? = null,
+    @SerialName("total_pages") val totalPages: Int? = null,
+)
+
+@Serializable
+private class HomeResponse(
+    val series: List<SeriesDto> = emptyList(),
+)
+
+@Serializable
+private class ReadResponse(
+    val pages: List<String> = emptyList(),
+)
+
+@Serializable
+private class SeriesDto(
+    val title: String = "",
+    val slug: String = "",
+    val cover: String = "",
+    val author: String? = null,
+    val artist: String? = null,
+    val genre: List<String>? = null,
+    val summary: String? = null,
+    val status: String? = null,
+    @SerialName("chapter_list") val chapterList: List<ChapterDto>? = null,
+) {
+    fun toSManga() = SManga.create().apply {
+        title = this@SeriesDto.title
+        url = slug
+        thumbnail_url = cover
+        author = this@SeriesDto.author
+        artist = this@SeriesDto.artist
+        genre = this@SeriesDto.genre?.joinToString(", ")
+        description = summary
+        status = when (this@SeriesDto.status?.lowercase()) {
+            "ongoing" -> SManga.ONGOING
+            "completed" -> SManga.COMPLETED
+            else -> SManga.UNKNOWN
         }
     }
 }
+
+@Serializable
+private class ChapterDto(
+    val title: String = "",
+    val url: String = "",
+    val datetime: String? = null,
+)
