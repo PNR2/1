@@ -27,7 +27,8 @@ class SenManga(
 
     // ================== Popular / Browse ==================
     override suspend fun getPopularManga(page: Int): MangasPage {
-        val request = GET("$baseUrl/directory/popular?page=$page", headers)
+        // Uses the directory page but forcefully sorts it by Popular
+        val request = GET("$baseUrl/directory?Order=Popular&page=$page", headers)
         val response = client.newCall(request).execute()
         val document = Jsoup.parse(response.body.string(), baseUrl)
         return parseMangasPage(document)
@@ -35,7 +36,8 @@ class SenManga(
 
     // ================== Latest ==================
     override suspend fun getLatestUpdates(page: Int): MangasPage {
-        val request = GET("$baseUrl/directory/last_update?page=$page", headers)
+        // Points exactly to the updates page 
+        val request = GET("$baseUrl/updates?page=$page", headers)
         val response = client.newCall(request).execute()
         val document = Jsoup.parse(response.body.string(), baseUrl)
         return parseMangasPage(document)
@@ -43,18 +45,20 @@ class SenManga(
 
     // ================== Search ==================
     override suspend fun getSearchMangaList(page: Int, query: String, filters: FilterList): MangasPage {
-        val url = "$baseUrl/search".toHttpUrl().newBuilder()
+        // Uses the directory page and the 'title' parameter from their search box
+        val url = "$baseUrl/directory".toHttpUrl().newBuilder()
             .addQueryParameter("title", query)
             .addQueryParameter("page", page.toString())
             .build()
+        
         val request = GET(url, headers)
         val response = client.newCall(request).execute()
         val document = Jsoup.parse(response.body.string(), baseUrl)
         return parseMangasPage(document)
     }
 
+    // ================== HTML Parser for Mangas ==================
     private fun parseMangasPage(document: Document): MangasPage {
-        // Updated to match the exact HTML classes provided
         val mangaElements = document.select("div.manga-card")
         val mangas = mangaElements.mapNotNull { element ->
             val linkElement = element.selectFirst("a") ?: return@mapNotNull null
@@ -63,11 +67,11 @@ class SenManga(
             SManga.create().apply {
                 title = titleElement.text().trim()
                 setUrlWithoutDomain(linkElement.attr("href"))
-                thumbnail_url = element.selectFirst("img")?.attr("src")
+                // Using abs:src ensures relative URLs like /api/proxy... are fully formed
+                thumbnail_url = element.selectFirst("img")?.attr("abs:src")
             }
         }
         
-        // Updated to match the pagination structure provided
         val hasNextPage = document.selectFirst("ul.pagination li a[rel=next]") != null
         return MangasPage(mangas, hasNextPage)
     }
@@ -86,13 +90,12 @@ class SenManga(
         val updatedManga = if (fetchDetails) {
             SManga.create().apply {
                 url = manga.url
-                // General selectors that cover most Next.js generated template classes
-                title = document.selectFirst("h1.series-title, h1.title, h1")?.text()?.trim() ?: manga.title
-                thumbnail_url = document.selectFirst("div.cover img, div.thumb img, img.cover")?.attr("src") ?: manga.thumbnail_url
+                title = document.selectFirst("h1.series-title, h1.title, h1, div.info h2")?.text()?.trim() ?: manga.title
+                thumbnail_url = document.selectFirst("div.cover img, div.thumb img, img.cover, img.img-responsive")?.attr("abs:src") ?: manga.thumbnail_url
                 author = document.select("ul.series-info li:contains(Author) a, div.author a").text().ifEmpty { manga.author }
                 artist = document.select("ul.series-info li:contains(Artist) a, div.artist a").text().ifEmpty { manga.artist }
                 genre = document.select("ul.series-info li:contains(Genre) a, div.genre a").joinToString(", ") { it.text() }.ifEmpty { manga.genre }
-                description = document.selectFirst("div.summary, div.description, p.summary")?.text()?.trim() ?: manga.description
+                description = document.selectFirst("div.summary, div.description, p.summary, div.synopsis")?.text()?.trim() ?: manga.description
 
                 val statusText = document.select("ul.series-info li:contains(Status), div.status").text()
                 status = when {
@@ -106,7 +109,7 @@ class SenManga(
         }
 
         val updatedChapters = if (fetchChapters) {
-            document.select("ul.chapter-list li, div.chapter-list li, ul.chapters li, div.chapter-item").mapNotNull { element ->
+            document.select("ul.chapter-list li, div.chapter-list li, ul.chapters li, div.chapter-item, div.chapters-list ul li").mapNotNull { element ->
                 val link = element.selectFirst("a") ?: return@mapNotNull null
                 SChapter.create().apply {
                     name = link.text().trim()
@@ -134,7 +137,7 @@ class SenManga(
         val document = Jsoup.parse(response.body.string(), baseUrl)
 
         return document.select("div.reader-page img, div.page-image img, div#reader img, img.page").mapIndexed { index, img ->
-            val imageUrl = img.attr("src").ifEmpty { img.attr("data-src") }
+            val imageUrl = img.attr("abs:src").ifEmpty { img.attr("abs:data-src") }
             Page(index, "", imageUrl)
         }
     }
