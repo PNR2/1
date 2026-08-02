@@ -17,6 +17,8 @@ import java.util.Locale
 
 @Source
 class SenManga(
+    override val name: String = "SenManga",
+    override val baseUrl: String = "https://senmanga.com",
     override val lang: String = "ja",
     override val id: Long = 8527391823471923L,
 ) : KeiSource() {
@@ -80,22 +82,22 @@ class SenManga(
         val updatedManga = if (fetchDetails) {
             SManga.create().apply {
                 url = manga.url
-                title = document.selectFirst("h1.series-title")?.text()?.trim() ?: ""
-                thumbnail_url = document.selectFirst("div.cover img")?.attr("src")
-                author = document.select("ul.series-info li:contains(Author) a").text()
-                artist = document.select("ul.series-info li:contains(Artist) a").text()
-                genre = document.select("ul.series-info li:contains(Genre) a").joinToString(", ") { it.text() }
-                description = document.selectFirst("div.summary")?.text()?.trim()
+                title = document.selectFirst("h1.series-title")?.text()?.trim() ?: manga.title
+                thumbnail_url = document.selectFirst("div.cover img")?.attr("src") ?: manga.thumbnail_url
+                author = document.select("ul.series-info li:contains(Author) a").text().ifEmpty { manga.author }
+                artist = document.select("ul.series-info li:contains(Artist) a").text().ifEmpty { manga.artist }
+                genre = document.select("ul.series-info li:contains(Genre) a").joinToString(", ") { it.text() }.ifEmpty { manga.genre }
+                description = document.selectFirst("div.summary")?.text()?.trim() ?: manga.description
 
                 val statusText = document.select("ul.series-info li:contains(Status)").text()
                 status = when {
                     statusText.contains("Ongoing", ignoreCase = true) -> SManga.ONGOING
                     statusText.contains("Completed", ignoreCase = true) -> SManga.COMPLETED
-                    else -> SManga.UNKNOWN
+                    else -> manga.status
                 }
             }
         } else {
-            null
+            manga
         }
 
         val updatedChapters = if (fetchChapters) {
@@ -110,9 +112,30 @@ class SenManga(
                 }
             }
         } else {
-            null
+            chapters
         }
 
+        return SMangaUpdate(manga = updatedManga, chapters = updatedChapters)
+    }
+
+    private fun parseDate(dateStr: String): Long = try {
+        SimpleDateFormat("MMM dd, yyyy", Locale.ENGLISH).parse(dateStr)?.time ?: 0L
+    } catch (e: Exception) {
+        0L
+    }
+
+    // ================== Page List (Images) ==================
+    override suspend fun getPageList(chapter: SChapter): List<Page> {
+        val request = GET(baseUrl + chapter.url, headers)
+        val response = client.newCall(request).execute()
+        val document = Jsoup.parse(response.body.string(), baseUrl)
+
+        return document.select("div.reader-page img").mapIndexed { index, img ->
+            val imageUrl = img.attr("src").ifEmpty { img.attr("data-src") }
+            Page(index, "", imageUrl)
+        }
+    }
+}
         return SMangaUpdate(manga = updatedManga, chapters = updatedChapters)
     }
 
