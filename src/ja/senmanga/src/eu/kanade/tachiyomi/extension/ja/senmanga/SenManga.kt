@@ -134,4 +134,3 @@ class SenManga(
             val imageUrl = img.attr("src").ifEmpty { img.attr("data-src") }
             Page(index, "", imageUrl)
         }
-    }
