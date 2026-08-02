@@ -135,25 +135,3 @@ class SenManga(
             Page(index, "", imageUrl)
         }
     }
-}
-        return SMangaUpdate(manga = updatedManga, chapters = updatedChapters)
-    }
-
-    private fun parseDate(dateStr: String): Long = try {
-        SimpleDateFormat("MMM dd, yyyy", Locale.ENGLISH).parse(dateStr)?.time ?: 0L
-    } catch (e: Exception) {
-        0L
-    }
-
-    // ================== Page List (Images) ==================
-    override suspend fun getPageList(chapter: SChapter): List<Page> {
-        val request = GET(baseUrl + chapter.url, headers)
-        val response = client.newCall(request).execute()
-        val document = Jsoup.parse(response.body.string(), baseUrl)
-
-        return document.select("div.reader-page img").mapIndexed { index, img ->
-            val imageUrl = img.attr("src").ifEmpty { img.attr("data-src") }
-            Page(index, "", imageUrl)
-        }
-    }
-}
