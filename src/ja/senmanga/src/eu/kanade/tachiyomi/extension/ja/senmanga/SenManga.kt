@@ -17,20 +17,21 @@ import java.text.SimpleDateFormat
 import java.util.Locale
 
 @Source
-class SenManga(
-    override val name: String = "SenManga",
-    override val baseUrl: String = "https://senmanga.com",
-    override val lang: String = "ja",
-    override val id: Long = 8527391823471923L,
-) : KeiSource() {
+class SenManga : KeiSource() {
+
+    override val name: String = "SenManga"
+    override val baseUrl: String = "https://senmanga.com"
+    override val lang: String = "ja"
+    override val id: Long = 8527391823471923L
 
     override val supportsLatest = true
 
-    // Disguise Mihon as a standard Chrome Desktop browser to bypass bot-checks
-    override fun headersBuilder(): Headers.Builder = super.headersBuilder()
+    // Correct KeiSource header override syntax
+    override val headers: Headers = super.headersBuilder()
         .set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36")
         .set("Referer", "$baseUrl/")
         .set("Accept-Language", "en-US,en;q=0.9")
+        .build()
 
     // ================== Popular / Browse ==================
     override suspend fun getPopularManga(page: Int): MangasPage {
