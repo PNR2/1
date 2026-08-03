@@ -18,7 +18,6 @@ import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
-import okhttp3.Headers
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import uy.kohesive.injekt.injectLazy
 import kotlin.time.Instant
@@ -29,14 +28,17 @@ abstract class SenManga : KeiSource() {
     override val supportsLatest = true
     private val json: Json by injectLazy()
 
-    // Spoof headers to bypass HTTP 500 errors and Timeouts
-    override fun headersBuilder(): Headers.Builder = super.headersBuilder()
-        .add("Referer", "$baseUrl/")
-        .add("Accept", "application/json, text/plain, */*")
+    // Create a custom header object instead of overriding the locked headersBuilder
+    private val apiHeaders by lazy {
+        headers.newBuilder()
+            .add("Referer", "$baseUrl/")
+            .add("Accept", "application/json, text/plain, */*")
+            .build()
+    }
 
     // ================== Popular / Browse ==================
     override suspend fun getPopularManga(page: Int): MangasPage {
-        val response = client.get("$baseUrl/api/popular?page=$page", headers)
+        val response = client.get("$baseUrl/api/popular?page=$page", apiHeaders)
         val apiResponse = response.parseAs<SenMangaListResponse>()
         val mangas = apiResponse.getMangas(baseUrl)
         
@@ -46,7 +48,7 @@ abstract class SenManga : KeiSource() {
     // ================== Latest ==================
     override suspend fun getLatestUpdates(page: Int): MangasPage {
         val limit = 20 * page
-        val response = client.get("$baseUrl/api/recentAdded?limit=$limit", headers)
+        val response = client.get("$baseUrl/api/recentAdded?limit=$limit", apiHeaders)
         val apiResponse = response.parseAs<SenMangaListResponse>()
         val mangas = apiResponse.getMangas(baseUrl)
         
@@ -55,7 +57,6 @@ abstract class SenManga : KeiSource() {
 
     // ================== Search ==================
     override suspend fun getSearchMangaList(page: Int, query: String, filters: FilterList): MangasPage {
-        // Using the adv_search API found in your Network tab
         val offset = (page - 1) * 60
         val searchUrl = "$baseUrl/api/adv_search".toHttpUrl().newBuilder()
             .addQueryParameter("title", query)
@@ -63,7 +64,7 @@ abstract class SenManga : KeiSource() {
             .addQueryParameter("offset", offset.toString())
             .build()
 
-        val response = client.get(searchUrl, headers)
+        val response = client.get(searchUrl, apiHeaders)
         val apiResponse = response.parseAs<SenMangaListResponse>()
         val mangas = apiResponse.getMangas(baseUrl)
         
@@ -78,7 +79,7 @@ abstract class SenManga : KeiSource() {
         fetchChapters: Boolean,
     ): SMangaUpdate {
         val updatedChapters = if (fetchChapters) {
-            val response = client.get("$baseUrl/api/title/${manga.url}/chapters", headers)
+            val response = client.get("$baseUrl/api/title/${manga.url}/chapters", apiHeaders)
             response.parseAs<SenMangaChapterListResponse>().getChaptersList()
         } else {
             chapters
@@ -89,7 +90,7 @@ abstract class SenManga : KeiSource() {
 
     // ================== Page List (Images) ==================
     override suspend fun getPageList(chapter: SChapter): List<Page> {
-        val response = client.get("$baseUrl/read/${chapter.url}", headers)
+        val response = client.get("$baseUrl/read/${chapter.url}", apiHeaders)
         val document = response.asJsoup()
         
         val scriptData = document.selectFirst("script#__NEXT_DATA__")?.data()
