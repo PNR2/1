@@ -13,11 +13,12 @@ import keiyoushi.source.KeiSource
 import keiyoushi.utils.parseAs
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
-import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import okhttp3.Headers
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import uy.kohesive.injekt.injectLazy
 import kotlin.time.Instant
@@ -28,9 +29,14 @@ abstract class SenManga : KeiSource() {
     override val supportsLatest = true
     private val json: Json by injectLazy()
 
+    // Spoof headers to bypass HTTP 500 errors and Timeouts
+    override fun headersBuilder(): Headers.Builder = super.headersBuilder()
+        .add("Referer", "$baseUrl/")
+        .add("Accept", "application/json, text/plain, */*")
+
     // ================== Popular / Browse ==================
     override suspend fun getPopularManga(page: Int): MangasPage {
-        val response = client.get("$baseUrl/api/popular?page=$page")
+        val response = client.get("$baseUrl/api/popular?page=$page", headers)
         val apiResponse = response.parseAs<SenMangaListResponse>()
         val mangas = apiResponse.getMangas(baseUrl)
         
@@ -40,38 +46,28 @@ abstract class SenManga : KeiSource() {
     // ================== Latest ==================
     override suspend fun getLatestUpdates(page: Int): MangasPage {
         val limit = 20 * page
-        val response = client.get("$baseUrl/api/recentAdded?limit=$limit")
+        val response = client.get("$baseUrl/api/recentAdded?limit=$limit", headers)
         val apiResponse = response.parseAs<SenMangaListResponse>()
         val mangas = apiResponse.getMangas(baseUrl)
         
         return MangasPage(mangas, mangas.size >= limit)
     }
 
-    // ================== Search (HTML Scraper) ==================
+    // ================== Search ==================
     override suspend fun getSearchMangaList(page: Int, query: String, filters: FilterList): MangasPage {
-        val searchUrl = "$baseUrl/directory".toHttpUrl().newBuilder()
+        // Using the adv_search API found in your Network tab
+        val offset = (page - 1) * 60
+        val searchUrl = "$baseUrl/api/adv_search".toHttpUrl().newBuilder()
             .addQueryParameter("title", query)
-            .addQueryParameter("page", page.toString())
+            .addQueryParameter("limit", "60")
+            .addQueryParameter("offset", offset.toString())
             .build()
 
-        val response = client.get(searchUrl)
-        val document = response.asJsoup()
+        val response = client.get(searchUrl, headers)
+        val apiResponse = response.parseAs<SenMangaListResponse>()
+        val mangas = apiResponse.getMangas(baseUrl)
         
-        val mangas = document.select("div.manga-card").mapNotNull { element ->
-            val linkElement = element.selectFirst("a") ?: return@mapNotNull null
-            val titleElement = element.selectFirst("div.title") ?: return@mapNotNull null
-
-            SManga.create().apply {
-                this.title = titleElement.text().trim()
-                this.url = linkElement.attr("href").substringAfterLast("/") 
-                
-                val rawCover = element.selectFirst("img")?.attr("src") ?: ""
-                this.thumbnail_url = if (rawCover.isNotEmpty()) "$baseUrl/api/proxy?imageUrl=$rawCover" else ""
-            }
-        }
-        
-        val hasNextPage = document.selectFirst("ul.pagination li a[rel=next]") != null
-        return MangasPage(mangas, hasNextPage)
+        return MangasPage(mangas, mangas.isNotEmpty())
     }
 
     // ================== Manga Details & Chapters ==================
@@ -82,7 +78,7 @@ abstract class SenManga : KeiSource() {
         fetchChapters: Boolean,
     ): SMangaUpdate {
         val updatedChapters = if (fetchChapters) {
-            val response = client.get("$baseUrl/api/title/${manga.url}/chapters")
+            val response = client.get("$baseUrl/api/title/${manga.url}/chapters", headers)
             response.parseAs<SenMangaChapterListResponse>().getChaptersList()
         } else {
             chapters
@@ -93,19 +89,20 @@ abstract class SenManga : KeiSource() {
 
     // ================== Page List (Images) ==================
     override suspend fun getPageList(chapter: SChapter): List<Page> {
-        val response = client.get("$baseUrl/read/${chapter.url}")
+        val response = client.get("$baseUrl/read/${chapter.url}", headers)
         val document = response.asJsoup()
         
-        // Manually parse the JSON to bypass the "Cannot infer a predicate" bug
         val scriptData = document.selectFirst("script#__NEXT_DATA__")?.data()
             ?: throw Exception("Could not find image data on page")
             
-        val nextData = json.decodeFromString<SenMangaNextData>(scriptData)
-        val urls = nextData.pageProps?.chapter?.pageList?.url ?: emptyList()
-        
-        if (urls.isEmpty()) throw Exception("No pages found")
-        
-        return urls.mapIndexed { index, imgUrl ->
+        // Dynamically parse JSON to avoid the "Cannot infer a predicate" compiler crash
+        val parsed = json.parseToJsonElement(scriptData).jsonObject
+        val pageProps = parsed["props"]?.jsonObject?.get("pageProps")?.jsonObject ?: parsed["pageProps"]?.jsonObject
+        val urlArray = pageProps?.get("chapter")?.jsonObject?.get("pageList")?.jsonObject?.get("url")?.jsonArray
+            ?: throw Exception("Failed to extract image URLs from JSON")
+            
+        return urlArray.mapIndexed { index, element ->
+            val imgUrl = element.jsonPrimitive.content
             Page(index, imageUrl = "$baseUrl/api/proxy?imageUrl=$imgUrl")
         }
     }
@@ -162,6 +159,7 @@ class SenMangaChapter(
     private val title: String? = null,
     @SerialName("createdAt") private val createdAt: String = "",
     private val group: JsonElement? = null,
+    // Handled dynamically to prevent crashes
     private val language: JsonElement? = null,
 ) {
     fun toSChapter() = SChapter.create().apply {
@@ -185,24 +183,3 @@ class SenMangaChapter(
         }.getOrDefault(0L)
     }
 }
-
-// === Next.js Extractor DTOs ===
-@Serializable
-class SenMangaNextData(
-    val pageProps: SenMangaPageProps? = null,
-)
-
-@Serializable
-class SenMangaPageProps(
-    val chapter: SenMangaNextChapter? = null,
-)
-
-@Serializable
-class SenMangaNextChapter(
-    val pageList: SenMangaPageList? = null,
-)
-
-@Serializable
-class SenMangaPageList(
-    val url: List<String> = emptyList(),
-)
