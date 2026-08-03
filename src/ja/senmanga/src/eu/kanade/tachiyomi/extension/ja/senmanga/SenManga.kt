@@ -19,11 +19,8 @@ import kotlinx.serialization.json.decodeFromJsonElement
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
-import okhttp3.Headers
 import okhttp3.HttpUrl.Companion.toHttpUrl
-import okhttp3.OkHttpClient
 import uy.kohesive.injekt.injectLazy
-import java.util.concurrent.TimeUnit
 import kotlin.time.Instant
 
 @Source
@@ -31,13 +28,6 @@ abstract class SenManga : KeiSource() {
 
     override val supportsLatest = true
     private val json: Json by injectLazy()
-
-    // Drastically increase the timeout limits to prevent InterruptedIOException crashes
-    override val client: OkHttpClient = network.client.newBuilder()
-        .connectTimeout(3, TimeUnit.MINUTES)
-        .readTimeout(3, TimeUnit.MINUTES)
-        .writeTimeout(3, TimeUnit.MINUTES)
-        .build()
 
     // Spoof headers to bypass HTTP 500 errors
     private val apiHeaders by lazy {
@@ -51,7 +41,7 @@ abstract class SenManga : KeiSource() {
     override suspend fun getPopularManga(page: Int): MangasPage {
         val response = client.get("$baseUrl/api/popular?page=$page", apiHeaders)
         val apiResponse = response.parseAs<SenMangaListResponse>()
-        val mangas = apiResponse.getMangas(baseUrl)
+        val mangas = apiResponse.getMangas()
         
         return MangasPage(mangas, mangas.isNotEmpty())
     }
@@ -61,7 +51,7 @@ abstract class SenManga : KeiSource() {
         val limit = 20 * page
         val response = client.get("$baseUrl/api/recentAdded?limit=$limit", apiHeaders)
         val apiResponse = response.parseAs<SenMangaListResponse>()
-        val mangas = apiResponse.getMangas(baseUrl)
+        val mangas = apiResponse.getMangas()
         
         return MangasPage(mangas, mangas.size >= limit)
     }
@@ -95,7 +85,7 @@ abstract class SenManga : KeiSource() {
         }
         
         val mangas = jsonArray.map { element ->
-            json.decodeFromJsonElement<SenMangaItem>(element).toSManga(baseUrl)
+            json.decodeFromJsonElement<SenMangaItem>(element).toSManga()
         }
         
         return MangasPage(mangas, hasNextPage && mangas.isNotEmpty())
@@ -133,8 +123,8 @@ abstract class SenManga : KeiSource() {
             
         return urlArray.mapIndexed { index, element ->
             val imgUrl = element.jsonPrimitive.content
-            // We MUST use the proxy to bypass external site hotlink protections
-            Page(index, imageUrl = "$baseUrl/api/proxy?imageUrl=$imgUrl")
+            // BYPASS THE PROXY! Load straight from the source for instant speed!
+            Page(index, imageUrl = imgUrl)
         }
     }
 
@@ -148,7 +138,7 @@ abstract class SenManga : KeiSource() {
 class SenMangaListResponse(
     private val data: List<SenMangaItem> = emptyList(),
 ) {
-    fun getMangas(baseUrl: String): List<SManga> = data.map { it.toSManga(baseUrl) }
+    fun getMangas(): List<SManga> = data.map { it.toSManga() }
 }
 
 @Serializable
@@ -159,12 +149,13 @@ class SenMangaItem(
     @SerialName("cover_256") private val cover256: String? = null,
     private val series: SenMangaSeries? = null,
 ) {
-    fun toSManga(baseUrl: String) = SManga.create().apply {
+    fun toSManga() = SManga.create().apply {
         this.url = series?.id ?: this@SenMangaItem.id ?: ""
         this.title = series?.title ?: this@SenMangaItem.title ?: ""
         
+        // Remove the slow proxy here as well!
         val rawCover = series?.cover256 ?: this@SenMangaItem.cover256 ?: series?.cover ?: this@SenMangaItem.cover ?: ""
-        this.thumbnail_url = if (rawCover.isNotEmpty()) "$baseUrl/api/proxy?imageUrl=$rawCover" else ""
+        this.thumbnail_url = rawCover
     }
 }
 
