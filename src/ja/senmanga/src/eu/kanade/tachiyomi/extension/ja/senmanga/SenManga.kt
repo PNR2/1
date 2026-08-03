@@ -9,6 +9,7 @@ import eu.kanade.tachiyomi.source.model.SMangaUpdate
 import keiyoushi.annotation.Source
 import keiyoushi.network.get
 import keiyoushi.source.KeiSource
+import keiyoushi.utils.extractNextJs
 import keiyoushi.utils.parseAs
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
@@ -60,24 +61,32 @@ abstract class SenManga : KeiSource() {
         fetchDetails: Boolean,
         fetchChapters: Boolean,
     ): SMangaUpdate {
-        val response = client.get("$baseUrl/api/series/${manga.url}")
-        val detailsDto = response.parseAs<SenMangaDetails>()
+        // We already have the title and cover from the home page. 
+        // We only need to fetch the actual chapter list from the API you found.
+        val updatedChapters = if (fetchChapters) {
+            val response = client.get("$baseUrl/api/title/${manga.url}/chapters")
+            response.parseAs<SenMangaChapterListResponse>().getChaptersList()
+        } else {
+            chapters
+        }
 
-        val updatedManga = if (fetchDetails) detailsDto.toSManga(baseUrl).apply { url = manga.url } else manga
-        val updatedChapters = if (fetchChapters) detailsDto.getChaptersList() else chapters
-
-        return SMangaUpdate(manga = updatedManga, chapters = updatedChapters)
+        return SMangaUpdate(manga = manga, chapters = updatedChapters)
     }
 
     // ================== Page List (Images) ==================
     override suspend fun getPageList(chapter: SChapter): List<Page> {
-        val response = client.get("$baseUrl/api/chapter/${chapter.url}")
-        val pagesDto = response.parseAs<SenMangaPagesResponse>()
-        return pagesDto.getPages(baseUrl)
+        // We use the built-in Next.js extractor to grab the JSON directly from the reader page!
+        val response = client.get("$baseUrl/read/${chapter.url}")
+        val nextData = response.extractNextJs<SenMangaNextData>()
+        
+        return nextData.pageProps.chapter.pageList.url.mapIndexed { index, imgUrl ->
+            Page(index, imageUrl = "$baseUrl/api/proxy?imageUrl=$imgUrl")
+        }
     }
 
-    override fun getMangaUrl(manga: SManga): String = "$baseUrl/series/${manga.url}"
-    override fun getChapterUrl(chapter: SChapter): String = "$baseUrl/chapter/${chapter.url}"
+    // ================== WebView URLs ==================
+    override fun getMangaUrl(manga: SManga): String = "$baseUrl/title/${manga.url}"
+    override fun getChapterUrl(chapter: SChapter): String = "$baseUrl/read/${chapter.url}"
 }
 
 // ================== DTO Models ==================
@@ -98,11 +107,9 @@ class SenMangaItem(
     private val series: SenMangaSeries? = null 
 ) {
     fun toSManga(baseUrl: String) = SManga.create().apply {
-        // Prioritize the nested series ID if it exists
         url = series?.id ?: this@SenMangaItem.id ?: ""
         title = series?.title ?: this@SenMangaItem.title ?: ""
         
-        // Wrap images in SenManga's proxy to bypass MangaDex hotlinking protection
         val rawCover = series?.cover256 ?: this@SenMangaItem.cover256 ?: series?.cover ?: this@SenMangaItem.cover ?: ""
         thumbnail_url = if (rawCover.isNotEmpty()) "$baseUrl/api/proxy?imageUrl=$rawCover" else ""
     }
@@ -117,31 +124,10 @@ class SenMangaSeries(
 )
 
 @Serializable
-class SenMangaDetails(
-    private val title: String = "",
-    private val description: String = "",
-    private val status: String = "",
-    private val author: String = "",
-    private val cover: String = "",
-    @SerialName("cover_256") private val cover256: String = "",
-    private val chapters: List<SenMangaChapter> = emptyList()
+class SenMangaChapterListResponse(
+    private val data: List<SenMangaChapter> = emptyList()
 ) {
-    fun toSManga(baseUrl: String) = SManga.create().apply {
-        this.title = this@SenMangaDetails.title
-        this.description = this@SenMangaDetails.description
-        this.author = this@SenMangaDetails.author
-        
-        val rawCover = cover256.ifEmpty { cover }
-        this.thumbnail_url = if (rawCover.isNotEmpty()) "$baseUrl/api/proxy?imageUrl=$rawCover" else ""
-        
-        this.status = when (this@SenMangaDetails.status.lowercase()) {
-            "ongoing" -> SManga.ONGOING
-            "completed" -> SManga.COMPLETED
-            else -> SManga.UNKNOWN
-        }
-    }
-
-    fun getChaptersList(): List<SChapter> = chapters.map { it.toSChapter() }.sortedByDescending { it.date_upload }
+    fun getChaptersList(): List<SChapter> = data.map { it.toSChapter() }.sortedByDescending { it.date_upload }
 }
 
 @Serializable
@@ -149,11 +135,15 @@ class SenMangaChapter(
     private val id: String = "",
     private val chapter: String = "",
     private val title: String? = null,
-    @SerialName("createdAt") private val createdAt: String = ""
+    @SerialName("createdAt") private val createdAt: String = "",
+    private val language: SenMangaLanguage? = null
 ) {
     fun toSChapter() = SChapter.create().apply {
         this.url = this@SenMangaChapter.id
-        this.name = "Chapter $chapter" + (title?.let { " - $it" } ?: "")
+        
+        // Some chapters are in different languages, so we prepend the language code
+        val langPrefix = language?.code?.let { "[$it] " } ?: ""
+        this.name = langPrefix + "Chapter $chapter" + (title?.let { " - $it" } ?: "")
         
         this.date_upload = runCatching {
             Instant.parseOrNull(createdAt)?.toEpochMilliseconds() ?: 0L
@@ -162,17 +152,27 @@ class SenMangaChapter(
 }
 
 @Serializable
-class SenMangaPagesResponse(
-    private val data: SenMangaChapterData? = null
-) {
-    fun getPages(baseUrl: String): List<Page> {
-        return data?.pages?.mapIndexed { index, url ->
-            Page(index, imageUrl = "$baseUrl/api/proxy?imageUrl=$url")
-        } ?: emptyList()
-    }
-}
+class SenMangaLanguage(
+    val code: String = ""
+)
+
+// === Next.js Extractor DTOs ===
+@Serializable
+class SenMangaNextData(
+    val pageProps: SenMangaPageProps
+)
 
 @Serializable
-class SenMangaChapterData(
-    val pages: List<String> = emptyList()
+class SenMangaPageProps(
+    val chapter: SenMangaNextChapter
+)
+
+@Serializable
+class SenMangaNextChapter(
+    val pageList: SenMangaPageList
+)
+
+@Serializable
+class SenMangaPageList(
+    val url: List<String> = emptyList()
 )
