@@ -6,6 +6,7 @@ import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.source.model.SChapter
 import eu.kanade.tachiyomi.source.model.SManga
 import eu.kanade.tachiyomi.source.model.SMangaUpdate
+import eu.kanade.tachiyomi.util.asJsoup
 import keiyoushi.annotation.Source
 import keiyoushi.network.get
 import keiyoushi.source.KeiSource
@@ -13,6 +14,9 @@ import keiyoushi.utils.extractNextJs
 import keiyoushi.utils.parseAs
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import kotlin.time.Instant
 
@@ -40,18 +44,33 @@ abstract class SenManga : KeiSource() {
         return MangasPage(mangas, mangas.size >= limit)
     }
 
-    // ================== Search ==================
+    // ================== Search (HTML Scraper) ==================
     override suspend fun getSearchMangaList(page: Int, query: String, filters: FilterList): MangasPage {
-        val url = "$baseUrl/api/directory".toHttpUrl().newBuilder()
+        // The API directory returned 404, so we revert to scraping the HTML page for searches
+        val url = "$baseUrl/directory".toHttpUrl().newBuilder()
             .addQueryParameter("title", query)
             .addQueryParameter("page", page.toString())
             .build()
 
         val response = client.get(url)
-        val apiResponse = response.parseAs<SenMangaListResponse>()
-        val mangas = apiResponse.getMangas(baseUrl)
+        val document = response.asJsoup()
         
-        return MangasPage(mangas, mangas.isNotEmpty())
+        val mangas = document.select("div.manga-card").mapNotNull { element ->
+            val linkElement = element.selectFirst("a") ?: return@mapNotNull null
+            val titleElement = element.selectFirst("div.title") ?: return@mapNotNull null
+
+            SManga.create().apply {
+                title = titleElement.text().trim()
+                // Extract just the UUID to use with our API routes later
+                url = linkElement.attr("href").substringAfterLast("/") 
+                
+                val rawCover = element.selectFirst("img")?.attr("src") ?: ""
+                thumbnail_url = if (rawCover.isNotEmpty()) "$baseUrl/api/proxy?imageUrl=$rawCover" else ""
+            }
+        }
+        
+        val hasNextPage = document.selectFirst("ul.pagination li a[rel=next]") != null
+        return MangasPage(mangas, hasNextPage)
     }
 
     // ================== Manga Details & Chapters ==================
@@ -61,8 +80,6 @@ abstract class SenManga : KeiSource() {
         fetchDetails: Boolean,
         fetchChapters: Boolean,
     ): SMangaUpdate {
-        // We already have the title and cover from the home page. 
-        // We only need to fetch the actual chapter list from the API you found.
         val updatedChapters = if (fetchChapters) {
             val response = client.get("$baseUrl/api/title/${manga.url}/chapters")
             response.parseAs<SenMangaChapterListResponse>().getChaptersList()
@@ -75,11 +92,9 @@ abstract class SenManga : KeiSource() {
 
     // ================== Page List (Images) ==================
     override suspend fun getPageList(chapter: SChapter): List<Page> {
-        // We use the built-in Next.js extractor to grab the JSON directly from the reader page!
         val response = client.get("$baseUrl/read/${chapter.url}")
         val nextData = response.extractNextJs<SenMangaNextData>()
         
-        // Safely traverse the nullable Next.js structure
         val urls = nextData?.pageProps?.chapter?.pageList?.url ?: emptyList()
         
         return urls.mapIndexed { index, imgUrl ->
@@ -87,7 +102,6 @@ abstract class SenManga : KeiSource() {
         }
     }
 
-    // ================== WebView URLs ==================
     override fun getMangaUrl(manga: SManga): String = "$baseUrl/title/${manga.url}"
     override fun getChapterUrl(chapter: SChapter): String = "$baseUrl/read/${chapter.url}"
 }
@@ -139,25 +153,32 @@ class SenMangaChapter(
     private val chapter: String = "",
     private val title: String? = null,
     @SerialName("createdAt") private val createdAt: String = "",
-    private val language: SenMangaLanguage? = null
+    private val group: JsonElement? = null,
+    private val language: JsonElement? = null // Handled dynamically to prevent crashes
 ) {
     fun toSChapter() = SChapter.create().apply {
         this.url = this@SenMangaChapter.id
         
-        // Some chapters are in different languages, so we prepend the language code
-        val langPrefix = language?.code?.let { "[$it] " } ?: ""
+        // Safely extract language whether it's an object or a string
+        val langCode = try {
+            language?.jsonObject?.get("code")?.jsonPrimitive?.content
+        } catch (e: Exception) {
+            language?.jsonPrimitive?.content
+        }
+        
+        val langPrefix = langCode?.let { "[$it] " } ?: ""
         this.name = langPrefix + "Chapter $chapter" + (title?.let { " - $it" } ?: "")
+        
+        // Safely extract scanlator group
+        this.scanlator = try {
+            group?.jsonObject?.get("title")?.jsonPrimitive?.content
+        } catch (e: Exception) { null }
         
         this.date_upload = runCatching {
             Instant.parseOrNull(createdAt)?.toEpochMilliseconds() ?: 0L
         }.getOrDefault(0L)
     }
 }
-
-@Serializable
-class SenMangaLanguage(
-    val code: String = ""
-)
 
 // === Next.js Extractor DTOs ===
 @Serializable
