@@ -10,20 +10,23 @@ import eu.kanade.tachiyomi.util.asJsoup
 import keiyoushi.annotation.Source
 import keiyoushi.network.get
 import keiyoushi.source.KeiSource
-import keiyoushi.utils.extractNextJs
 import keiyoushi.utils.parseAs
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.decodeFromString
+import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import okhttp3.HttpUrl.Companion.toHttpUrl
+import uy.kohesive.injekt.injectLazy
 import kotlin.time.Instant
 
 @Source
 abstract class SenManga : KeiSource() {
 
     override val supportsLatest = true
+    private val json: Json by injectLazy()
 
     // ================== Popular / Browse ==================
     override suspend fun getPopularManga(page: Int): MangasPage {
@@ -46,7 +49,6 @@ abstract class SenManga : KeiSource() {
 
     // ================== Search (HTML Scraper) ==================
     override suspend fun getSearchMangaList(page: Int, query: String, filters: FilterList): MangasPage {
-        // Renamed 'url' to 'searchUrl' to prevent variable shadowing conflicts
         val searchUrl = "$baseUrl/directory".toHttpUrl().newBuilder()
             .addQueryParameter("title", query)
             .addQueryParameter("page", page.toString())
@@ -61,7 +63,6 @@ abstract class SenManga : KeiSource() {
 
             SManga.create().apply {
                 this.title = titleElement.text().trim()
-                // Use 'this.url' explicitly to avoid compiler confusion
                 this.url = linkElement.attr("href").substringAfterLast("/") 
                 
                 val rawCover = element.selectFirst("img")?.attr("src") ?: ""
@@ -93,9 +94,16 @@ abstract class SenManga : KeiSource() {
     // ================== Page List (Images) ==================
     override suspend fun getPageList(chapter: SChapter): List<Page> {
         val response = client.get("$baseUrl/read/${chapter.url}")
-        val nextData = response.extractNextJs<SenMangaNextData>()
+        val document = response.asJsoup()
         
-        val urls = nextData?.pageProps?.chapter?.pageList?.url ?: emptyList()
+        // Manually parse the JSON to bypass the "Cannot infer a predicate" bug
+        val scriptData = document.selectFirst("script#__NEXT_DATA__")?.data()
+            ?: throw Exception("Could not find image data on page")
+            
+        val nextData = json.decodeFromString<SenMangaNextData>(scriptData)
+        val urls = nextData.pageProps?.chapter?.pageList?.url ?: emptyList()
+        
+        if (urls.isEmpty()) throw Exception("No pages found")
         
         return urls.mapIndexed { index, imgUrl ->
             Page(index, imageUrl = "$baseUrl/api/proxy?imageUrl=$imgUrl")
@@ -154,13 +162,11 @@ class SenMangaChapter(
     private val title: String? = null,
     @SerialName("createdAt") private val createdAt: String = "",
     private val group: JsonElement? = null,
-    // Handled dynamically to prevent crashes
     private val language: JsonElement? = null,
 ) {
     fun toSChapter() = SChapter.create().apply {
         this.url = this@SenMangaChapter.id
         
-        // Safely extract language whether it's an object or a string
         val langCode = try {
             language?.jsonObject?.get("code")?.jsonPrimitive?.content
         } catch (e: Exception) {
@@ -170,7 +176,6 @@ class SenMangaChapter(
         val langPrefix = langCode?.let { "[$it] " } ?: ""
         this.name = langPrefix + "Chapter $chapter" + (title?.let { " - $it" } ?: "")
         
-        // Safely extract scanlator group
         this.scanlator = try {
             group?.jsonObject?.get("title")?.jsonPrimitive?.content
         } catch (e: Exception) { null }
