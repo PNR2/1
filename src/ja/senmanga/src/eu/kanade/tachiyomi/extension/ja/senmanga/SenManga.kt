@@ -46,13 +46,13 @@ abstract class SenManga : KeiSource() {
 
     // ================== Search (HTML Scraper) ==================
     override suspend fun getSearchMangaList(page: Int, query: String, filters: FilterList): MangasPage {
-        // The API directory returned 404, so we revert to scraping the HTML page for searches
-        val url = "$baseUrl/directory".toHttpUrl().newBuilder()
+        // Renamed 'url' to 'searchUrl' to prevent variable shadowing conflicts
+        val searchUrl = "$baseUrl/directory".toHttpUrl().newBuilder()
             .addQueryParameter("title", query)
             .addQueryParameter("page", page.toString())
             .build()
 
-        val response = client.get(url)
+        val response = client.get(searchUrl)
         val document = response.asJsoup()
         
         val mangas = document.select("div.manga-card").mapNotNull { element ->
@@ -60,12 +60,12 @@ abstract class SenManga : KeiSource() {
             val titleElement = element.selectFirst("div.title") ?: return@mapNotNull null
 
             SManga.create().apply {
-                title = titleElement.text().trim()
-                // Extract just the UUID to use with our API routes later
-                url = linkElement.attr("href").substringAfterLast("/") 
+                this.title = titleElement.text().trim()
+                // Use 'this.url' explicitly to avoid compiler confusion
+                this.url = linkElement.attr("href").substringAfterLast("/") 
                 
                 val rawCover = element.selectFirst("img")?.attr("src") ?: ""
-                thumbnail_url = if (rawCover.isNotEmpty()) "$baseUrl/api/proxy?imageUrl=$rawCover" else ""
+                this.thumbnail_url = if (rawCover.isNotEmpty()) "$baseUrl/api/proxy?imageUrl=$rawCover" else ""
             }
         }
         
@@ -124,11 +124,11 @@ class SenMangaItem(
     private val series: SenMangaSeries? = null,
 ) {
     fun toSManga(baseUrl: String) = SManga.create().apply {
-        url = series?.id ?: this@SenMangaItem.id ?: ""
-        title = series?.title ?: this@SenMangaItem.title ?: ""
+        this.url = series?.id ?: this@SenMangaItem.id ?: ""
+        this.title = series?.title ?: this@SenMangaItem.title ?: ""
         
         val rawCover = series?.cover256 ?: this@SenMangaItem.cover256 ?: series?.cover ?: this@SenMangaItem.cover ?: ""
-        thumbnail_url = if (rawCover.isNotEmpty()) "$baseUrl/api/proxy?imageUrl=$rawCover" else ""
+        this.thumbnail_url = if (rawCover.isNotEmpty()) "$baseUrl/api/proxy?imageUrl=$rawCover" else ""
     }
 }
 
