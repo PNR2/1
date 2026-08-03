@@ -16,7 +16,7 @@ import okhttp3.HttpUrl.Companion.toHttpUrl
 import kotlin.time.Instant
 
 @Source
-class SenManga : KeiSource() {
+abstract class SenManga : KeiSource() {
 
     override val supportsLatest = true
 
