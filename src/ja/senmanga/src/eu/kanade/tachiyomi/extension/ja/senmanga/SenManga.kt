@@ -24,18 +24,17 @@ abstract class SenManga : KeiSource() {
     override suspend fun getPopularManga(page: Int): MangasPage {
         val response = client.get("$baseUrl/api/popular?page=$page")
         val apiResponse = response.parseAs<SenMangaListResponse>()
-        val mangas = apiResponse.getMangas()
+        val mangas = apiResponse.getMangas(baseUrl)
         
         return MangasPage(mangas, mangas.isNotEmpty())
     }
 
     // ================== Latest ==================
     override suspend fun getLatestUpdates(page: Int): MangasPage {
-        // The API uses a limit. We increment the limit to fetch more pages.
         val limit = 20 * page
         val response = client.get("$baseUrl/api/recentAdded?limit=$limit")
         val apiResponse = response.parseAs<SenMangaListResponse>()
-        val mangas = apiResponse.getMangas()
+        val mangas = apiResponse.getMangas(baseUrl)
         
         return MangasPage(mangas, mangas.size >= limit)
     }
@@ -49,7 +48,7 @@ abstract class SenManga : KeiSource() {
 
         val response = client.get(url)
         val apiResponse = response.parseAs<SenMangaListResponse>()
-        val mangas = apiResponse.getMangas()
+        val mangas = apiResponse.getMangas(baseUrl)
         
         return MangasPage(mangas, mangas.isNotEmpty())
     }
@@ -61,11 +60,10 @@ abstract class SenManga : KeiSource() {
         fetchDetails: Boolean,
         fetchChapters: Boolean,
     ): SMangaUpdate {
-        // Fetching details directly from the API using the stored UUID
         val response = client.get("$baseUrl/api/series/${manga.url}")
         val detailsDto = response.parseAs<SenMangaDetails>()
 
-        val updatedManga = if (fetchDetails) detailsDto.toSManga().apply { url = manga.url } else manga
+        val updatedManga = if (fetchDetails) detailsDto.toSManga(baseUrl).apply { url = manga.url } else manga
         val updatedChapters = if (fetchChapters) detailsDto.getChaptersList() else chapters
 
         return SMangaUpdate(manga = updatedManga, chapters = updatedChapters)
@@ -75,10 +73,9 @@ abstract class SenManga : KeiSource() {
     override suspend fun getPageList(chapter: SChapter): List<Page> {
         val response = client.get("$baseUrl/api/chapter/${chapter.url}")
         val pagesDto = response.parseAs<SenMangaPagesResponse>()
-        return pagesDto.getPages()
+        return pagesDto.getPages(baseUrl)
     }
 
-    // Ensures "Open in WebView" takes the user to the actual website instead of the raw API JSON
     override fun getMangaUrl(manga: SManga): String = "$baseUrl/series/${manga.url}"
     override fun getChapterUrl(chapter: SChapter): String = "$baseUrl/chapter/${chapter.url}"
 }
@@ -98,15 +95,14 @@ class SenMangaItem(
     private val title: String? = null,
     private val cover: String? = null,
     @SerialName("cover_256") private val cover256: String? = null,
-    // Accommodates the nested "series" object found in the recentAdded payload
     private val series: SenMangaSeries? = null 
 ) {
     fun toSManga(baseUrl: String) = SManga.create().apply {
-        // FIX 1: We MUST prioritize the nested series ID if it exists, otherwise it tries to load a chapter as a manga!
+        // Prioritize the nested series ID if it exists
         url = series?.id ?: this@SenMangaItem.id ?: ""
         title = series?.title ?: this@SenMangaItem.title ?: ""
         
-        // FIX 2: Wrap images in SenManga's proxy to bypass MangaDex hotlinking protection
+        // Wrap images in SenManga's proxy to bypass MangaDex hotlinking protection
         val rawCover = series?.cover256 ?: this@SenMangaItem.cover256 ?: series?.cover ?: this@SenMangaItem.cover ?: ""
         thumbnail_url = if (rawCover.isNotEmpty()) "$baseUrl/api/proxy?imageUrl=$rawCover" else ""
     }
@@ -171,8 +167,12 @@ class SenMangaPagesResponse(
 ) {
     fun getPages(baseUrl: String): List<Page> {
         return data?.pages?.mapIndexed { index, url ->
-            // Wrap chapter pages in the proxy as well
             Page(index, imageUrl = "$baseUrl/api/proxy?imageUrl=$url")
         } ?: emptyList()
     }
 }
+
+@Serializable
+class SenMangaChapterData(
+    val pages: List<String> = emptyList()
+)
