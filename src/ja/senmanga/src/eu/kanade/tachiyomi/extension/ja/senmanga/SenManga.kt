@@ -41,7 +41,7 @@ abstract class SenManga : KeiSource() {
     override suspend fun getPopularManga(page: Int): MangasPage {
         val response = client.get("$baseUrl/api/popular?page=$page", apiHeaders)
         val apiResponse = response.parseAs<SenMangaListResponse>()
-        val mangas = apiResponse.getMangas()
+        val mangas = apiResponse.getMangas(baseUrl)
         
         return MangasPage(mangas, mangas.isNotEmpty())
     }
@@ -51,7 +51,7 @@ abstract class SenManga : KeiSource() {
         val limit = 20 * page
         val response = client.get("$baseUrl/api/recentAdded?limit=$limit", apiHeaders)
         val apiResponse = response.parseAs<SenMangaListResponse>()
-        val mangas = apiResponse.getMangas()
+        val mangas = apiResponse.getMangas(baseUrl)
         
         return MangasPage(mangas, mangas.size >= limit)
     }
@@ -85,7 +85,7 @@ abstract class SenManga : KeiSource() {
         }
         
         val mangas = jsonArray.map { element ->
-            json.decodeFromJsonElement<SenMangaItem>(element).toSManga()
+            json.decodeFromJsonElement<SenMangaItem>(element).toSManga(baseUrl)
         }
         
         return MangasPage(mangas, hasNextPage && mangas.isNotEmpty())
@@ -123,8 +123,8 @@ abstract class SenManga : KeiSource() {
             
         return urlArray.mapIndexed { index, element ->
             val imgUrl = element.jsonPrimitive.content
-            // BYPASS THE PROXY! Load straight from the source for instant speed!
-            Page(index, imageUrl = imgUrl)
+            // Proxy is necessary to bypass cross-origin restrictions from external image hosts
+            Page(index, imageUrl = "$baseUrl/api/proxy?imageUrl=$imgUrl")
         }
     }
 
@@ -138,7 +138,7 @@ abstract class SenManga : KeiSource() {
 class SenMangaListResponse(
     private val data: List<SenMangaItem> = emptyList(),
 ) {
-    fun getMangas(): List<SManga> = data.map { it.toSManga() }
+    fun getMangas(baseUrl: String): List<SManga> = data.map { it.toSManga(baseUrl) }
 }
 
 @Serializable
@@ -149,13 +149,12 @@ class SenMangaItem(
     @SerialName("cover_256") private val cover256: String? = null,
     private val series: SenMangaSeries? = null,
 ) {
-    fun toSManga() = SManga.create().apply {
+    fun toSManga(baseUrl: String) = SManga.create().apply {
         this.url = series?.id ?: this@SenMangaItem.id ?: ""
         this.title = series?.title ?: this@SenMangaItem.title ?: ""
         
-        // Remove the slow proxy here as well!
         val rawCover = series?.cover256 ?: this@SenMangaItem.cover256 ?: series?.cover ?: this@SenMangaItem.cover ?: ""
-        this.thumbnail_url = rawCover
+        this.thumbnail_url = if (rawCover.isNotEmpty()) "$baseUrl/api/proxy?imageUrl=$rawCover" else ""
     }
 }
 
