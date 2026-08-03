@@ -79,7 +79,10 @@ abstract class SenManga : KeiSource() {
         val response = client.get("$baseUrl/read/${chapter.url}")
         val nextData = response.extractNextJs<SenMangaNextData>()
         
-        return nextData.pageProps.chapter.pageList.url.mapIndexed { index, imgUrl ->
+        // Safely traverse the nullable Next.js structure
+        val urls = nextData?.pageProps?.chapter?.pageList?.url ?: emptyList()
+        
+        return urls.mapIndexed { index, imgUrl ->
             Page(index, imageUrl = "$baseUrl/api/proxy?imageUrl=$imgUrl")
         }
     }
@@ -159,17 +162,17 @@ class SenMangaLanguage(
 // === Next.js Extractor DTOs ===
 @Serializable
 class SenMangaNextData(
-    val pageProps: SenMangaPageProps
+    val pageProps: SenMangaPageProps? = null
 )
 
 @Serializable
 class SenMangaPageProps(
-    val chapter: SenMangaNextChapter
+    val chapter: SenMangaNextChapter? = null
 )
 
 @Serializable
 class SenMangaNextChapter(
-    val pageList: SenMangaPageList
+    val pageList: SenMangaPageList? = null
 )
 
 @Serializable
