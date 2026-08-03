@@ -110,7 +110,7 @@ abstract class SenManga : KeiSource() {
 
 @Serializable
 class SenMangaListResponse(
-    private val data: List<SenMangaItem> = emptyList()
+    private val data: List<SenMangaItem> = emptyList(),
 ) {
     fun getMangas(baseUrl: String): List<SManga> = data.map { it.toSManga(baseUrl) }
 }
@@ -121,7 +121,7 @@ class SenMangaItem(
     private val title: String? = null,
     private val cover: String? = null,
     @SerialName("cover_256") private val cover256: String? = null,
-    private val series: SenMangaSeries? = null 
+    private val series: SenMangaSeries? = null,
 ) {
     fun toSManga(baseUrl: String) = SManga.create().apply {
         url = series?.id ?: this@SenMangaItem.id ?: ""
@@ -137,12 +137,12 @@ class SenMangaSeries(
     val id: String = "",
     val title: String = "",
     val cover: String = "",
-    @SerialName("cover_256") val cover256: String = ""
+    @SerialName("cover_256") val cover256: String = "",
 )
 
 @Serializable
 class SenMangaChapterListResponse(
-    private val data: List<SenMangaChapter> = emptyList()
+    private val data: List<SenMangaChapter> = emptyList(),
 ) {
     fun getChaptersList(): List<SChapter> = data.map { it.toSChapter() }.sortedByDescending { it.date_upload }
 }
@@ -154,7 +154,8 @@ class SenMangaChapter(
     private val title: String? = null,
     @SerialName("createdAt") private val createdAt: String = "",
     private val group: JsonElement? = null,
-    private val language: JsonElement? = null // Handled dynamically to prevent crashes
+    // Handled dynamically to prevent crashes
+    private val language: JsonElement? = null,
 ) {
     fun toSChapter() = SChapter.create().apply {
         this.url = this@SenMangaChapter.id
@@ -183,20 +184,20 @@ class SenMangaChapter(
 // === Next.js Extractor DTOs ===
 @Serializable
 class SenMangaNextData(
-    val pageProps: SenMangaPageProps? = null
+    val pageProps: SenMangaPageProps? = null,
 )
 
 @Serializable
 class SenMangaPageProps(
-    val chapter: SenMangaNextChapter? = null
+    val chapter: SenMangaNextChapter? = null,
 )
 
 @Serializable
 class SenMangaNextChapter(
-    val pageList: SenMangaPageList? = null
+    val pageList: SenMangaPageList? = null,
 )
 
 @Serializable
 class SenMangaPageList(
-    val url: List<String> = emptyList()
+    val url: List<String> = emptyList(),
 )
