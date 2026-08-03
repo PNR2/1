@@ -89,7 +89,7 @@ abstract class SenManga : KeiSource() {
 class SenMangaListResponse(
     private val data: List<SenMangaItem> = emptyList()
 ) {
-    fun getMangas(): List<SManga> = data.map { it.toSManga() }
+    fun getMangas(baseUrl: String): List<SManga> = data.map { it.toSManga(baseUrl) }
 }
 
 @Serializable
@@ -101,11 +101,14 @@ class SenMangaItem(
     // Accommodates the nested "series" object found in the recentAdded payload
     private val series: SenMangaSeries? = null 
 ) {
-    fun toSManga() = SManga.create().apply {
-        // We store the raw UUID as the URL to easily query the API later
-        url = this@SenMangaItem.id ?: series?.id ?: ""
-        title = this@SenMangaItem.title ?: series?.title ?: ""
-        thumbnail_url = this@SenMangaItem.cover256 ?: series?.cover256 ?: this@SenMangaItem.cover ?: series?.cover ?: ""
+    fun toSManga(baseUrl: String) = SManga.create().apply {
+        // FIX 1: We MUST prioritize the nested series ID if it exists, otherwise it tries to load a chapter as a manga!
+        url = series?.id ?: this@SenMangaItem.id ?: ""
+        title = series?.title ?: this@SenMangaItem.title ?: ""
+        
+        // FIX 2: Wrap images in SenManga's proxy to bypass MangaDex hotlinking protection
+        val rawCover = series?.cover256 ?: this@SenMangaItem.cover256 ?: series?.cover ?: this@SenMangaItem.cover ?: ""
+        thumbnail_url = if (rawCover.isNotEmpty()) "$baseUrl/api/proxy?imageUrl=$rawCover" else ""
     }
 }
 
@@ -127,11 +130,14 @@ class SenMangaDetails(
     @SerialName("cover_256") private val cover256: String = "",
     private val chapters: List<SenMangaChapter> = emptyList()
 ) {
-    fun toSManga() = SManga.create().apply {
+    fun toSManga(baseUrl: String) = SManga.create().apply {
         this.title = this@SenMangaDetails.title
         this.description = this@SenMangaDetails.description
         this.author = this@SenMangaDetails.author
-        this.thumbnail_url = cover256.ifEmpty { cover }
+        
+        val rawCover = cover256.ifEmpty { cover }
+        this.thumbnail_url = if (rawCover.isNotEmpty()) "$baseUrl/api/proxy?imageUrl=$rawCover" else ""
+        
         this.status = when (this@SenMangaDetails.status.lowercase()) {
             "ongoing" -> SManga.ONGOING
             "completed" -> SManga.COMPLETED
@@ -139,7 +145,6 @@ class SenMangaDetails(
         }
     }
 
-    // Chapters must be sorted descending according to the guide
     fun getChaptersList(): List<SChapter> = chapters.map { it.toSChapter() }.sortedByDescending { it.date_upload }
 }
 
@@ -154,7 +159,6 @@ class SenMangaChapter(
         this.url = this@SenMangaChapter.id
         this.name = "Chapter $chapter" + (title?.let { " - $it" } ?: "")
         
-        // Safely parses ISO-8601 dates and falls back to 0L if it fails
         this.date_upload = runCatching {
             Instant.parseOrNull(createdAt)?.toEpochMilliseconds() ?: 0L
         }.getOrDefault(0L)
@@ -165,14 +169,10 @@ class SenMangaChapter(
 class SenMangaPagesResponse(
     private val data: SenMangaChapterData? = null
 ) {
-    fun getPages(): List<Page> {
+    fun getPages(baseUrl: String): List<Page> {
         return data?.pages?.mapIndexed { index, url ->
-            Page(index, imageUrl = url)
+            // Wrap chapter pages in the proxy as well
+            Page(index, imageUrl = "$baseUrl/api/proxy?imageUrl=$url")
         } ?: emptyList()
     }
 }
-
-@Serializable
-class SenMangaChapterData(
-    val pages: List<String> = emptyList()
-)
