@@ -28,7 +28,7 @@ abstract class SenManga : KeiSource() {
     override val supportsLatest = true
     private val json: Json by injectLazy()
 
-    // Create a custom header object instead of overriding the locked headersBuilder
+    // Spoof headers to bypass HTTP 500 errors and Timeouts
     private val apiHeaders by lazy {
         headers.newBuilder()
             .add("Referer", "$baseUrl/")
@@ -58,17 +58,19 @@ abstract class SenManga : KeiSource() {
     // ================== Search ==================
     override suspend fun getSearchMangaList(page: Int, query: String, filters: FilterList): MangasPage {
         val offset = (page - 1) * 60
-        val searchUrl = "$baseUrl/api/adv_search".toHttpUrl().newBuilder()
-            .addQueryParameter("title", query)
+        val urlBuilder = "$baseUrl/api/adv_search".toHttpUrl().newBuilder()
             .addQueryParameter("limit", "60")
             .addQueryParameter("offset", offset.toString())
-            .build()
 
-        val response = client.get(searchUrl, apiHeaders)
+        if (query.isNotBlank()) {
+            urlBuilder.addQueryParameter("title", query)
+        }
+
+        val response = client.get(urlBuilder.build(), apiHeaders)
         val apiResponse = response.parseAs<SenMangaListResponse>()
         val mangas = apiResponse.getMangas(baseUrl)
         
-        return MangasPage(mangas, mangas.isNotEmpty())
+        return MangasPage(mangas, mangas.size >= 60)
     }
 
     // ================== Manga Details & Chapters ==================
@@ -150,7 +152,11 @@ class SenMangaSeries(
 class SenMangaChapterListResponse(
     private val data: List<SenMangaChapter> = emptyList(),
 ) {
-    fun getChaptersList(): List<SChapter> = data.map { it.toSChapter() }.sortedByDescending { it.date_upload }
+    fun getChaptersList(): List<SChapter> = data
+        // Filter out empty chapters or external links to MangaPlus/Webtoons to prevent reader crashes
+        .filter { it.pages > 0 && it.externalUrl == null }
+        .map { it.toSChapter() }
+        .sortedByDescending { it.date_upload }
 }
 
 @Serializable
@@ -162,6 +168,8 @@ class SenMangaChapter(
     private val group: JsonElement? = null,
     // Handled dynamically to prevent crashes
     private val language: JsonElement? = null,
+    val pages: Int = 0,
+    val externalUrl: String? = null,
 ) {
     fun toSChapter() = SChapter.create().apply {
         this.url = this@SenMangaChapter.id
