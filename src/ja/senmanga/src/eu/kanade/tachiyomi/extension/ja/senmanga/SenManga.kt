@@ -256,7 +256,9 @@ class SenMangaChapter(
 
         this.scanlator = try {
             group?.jsonObject?.get("title")?.jsonPrimitive?.content
-        } catch (e: Exception) { null }
+        } catch (e: Exception) {
+            null
+        }
 
         this.date_upload = runCatching {
             Instant.parseOrNull(createdAt)?.toEpochMilliseconds() ?: 0L
