@@ -93,27 +93,27 @@ abstract class SenManga : KeiSource() {
         return MangasPage(mangas, hasNextPage && mangas.isNotEmpty())
     }
 
-    // ================== Manga Details (Fetches Author, Description, Status) ==================
-    override suspend fun getMangaDetails(manga: SManga): SManga {
-        val response = client.get("$baseUrl/api/title/${manga.url}", apiHeaders)
-        val responseData = response.body.string()
-        
-        val parsedJson = json.parseToJsonElement(responseData).jsonObject
-        val dataObj = parsedJson["data"]?.jsonObject ?: parsedJson
-        val item = json.decodeFromJsonElement<SenMangaItem>(dataObj)
-        
-        return item.toSManga(baseUrl).apply {
-            this.url = manga.url
-        }
-    }
-
-    // ================== Chapter List ==================
+    // ================== Manga Details & Chapter List ==================
     override suspend fun fetchMangaUpdate(
         manga: SManga,
         chapters: List<SChapter>,
         fetchDetails: Boolean,
         fetchChapters: Boolean,
     ): SMangaUpdate {
+        
+        // Fetch rich metadata if requested by Mihon
+        val updatedManga = if (fetchDetails) {
+            val response = client.get("$baseUrl/api/title/${manga.url}", apiHeaders)
+            val parsedJson = json.parseToJsonElement(response.body.string()).jsonObject
+            val dataObj = parsedJson["data"]?.jsonObject ?: parsedJson
+            json.decodeFromJsonElement<SenMangaItem>(dataObj).toSManga(baseUrl).apply {
+                this.url = manga.url
+            }
+        } else {
+            manga
+        }
+
+        // Fetch chapter list if requested by Mihon
         val updatedChapters = if (fetchChapters) {
             val response = client.get("$baseUrl/api/title/${manga.url}/chapters", apiHeaders)
             response.parseAs<SenMangaChapterListResponse>().getChaptersList()
@@ -121,7 +121,7 @@ abstract class SenManga : KeiSource() {
             chapters
         }
 
-        return SMangaUpdate(manga = manga, chapters = updatedChapters)
+        return SMangaUpdate(manga = updatedManga, chapters = updatedChapters)
     }
 
     // ================== Page List (Images) ==================
@@ -155,6 +155,11 @@ class SenMangaListResponse(
 ) {
     fun getMangas(baseUrl: String): List<SManga> = data.map { it.toSManga(baseUrl) }
 }
+
+@Serializable
+class SenMangaName(
+    val name: String = ""
+)
 
 @Serializable
 class SenMangaItem(
