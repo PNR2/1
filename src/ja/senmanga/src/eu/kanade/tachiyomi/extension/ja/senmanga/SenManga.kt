@@ -38,7 +38,6 @@ abstract class SenManga : KeiSource() {
 
     // ================== Popular / Browse ==================
     override suspend fun getPopularManga(page: Int): MangasPage {
-        // Prevent infinite loading spinners by stopping at page 1 for the popular feed
         if (page > 1) return MangasPage(emptyList(), false)
         
         val response = client.get("$baseUrl/api/popular", apiHeaders)
@@ -144,24 +143,31 @@ class SenMangaListResponse(
 }
 
 @Serializable
-class SenMangaName(
-    val name: String = ""
-)
-
-@Serializable
 class SenMangaItem(
     private val id: String? = null,
     private val title: String? = null,
     private val cover: String? = null,
     @SerialName("cover_256") private val cover256: String? = null,
     private val series: SenMangaSeries? = null,
-    private val author: List<SenMangaName>? = null,
-    private val artist: List<SenMangaName>? = null,
+    private val author: JsonElement? = null,
+    private val artist: JsonElement? = null,
     private val description: String? = null,
-    private val genres: List<SenMangaName>? = null,
-    private val tags: List<SenMangaName>? = null,
+    private val genres: JsonElement? = null,
+    private val tags: JsonElement? = null,
     private val status: String? = null,
 ) {
+    // Safely extract names from the unpredictable JSON structures
+    private fun extractNames(element: JsonElement?): String? {
+        if (element == null) return null
+        return try {
+            element.jsonArray.mapNotNull { 
+                it.jsonObject["name"]?.jsonPrimitive?.content 
+            }.joinToString(", ").takeIf { it.isNotEmpty() }
+        } catch (e: Exception) {
+            null
+        }
+    }
+
     fun toSManga(baseUrl: String) = SManga.create().apply {
         this.url = series?.id ?: this@SenMangaItem.id ?: ""
         this.title = series?.title ?: this@SenMangaItem.title ?: ""
@@ -169,14 +175,17 @@ class SenMangaItem(
         val rawCover = series?.cover256 ?: this@SenMangaItem.cover256 ?: series?.cover ?: this@SenMangaItem.cover ?: ""
         this.thumbnail_url = if (rawCover.isNotEmpty()) "$baseUrl/api/proxy?imageUrl=$rawCover" else ""
         
-        // Rich Metadata Parsing
-        this.author = this@SenMangaItem.author?.joinToString { it.name }
-        this.artist = this@SenMangaItem.artist?.joinToString { it.name }
+        this.author = extractNames(this@SenMangaItem.author)
+        this.artist = extractNames(this@SenMangaItem.artist)
         this.description = this@SenMangaItem.description
         
-        val allTags = (this@SenMangaItem.genres.orEmpty() + this@SenMangaItem.tags.orEmpty()).map { it.name }
-        if (allTags.isNotEmpty()) {
-            this.genre = allTags.joinToString(", ")
+        val genreList = listOfNotNull(
+            extractNames(this@SenMangaItem.genres),
+            extractNames(this@SenMangaItem.tags)
+        ).filter { it.isNotBlank() }
+        
+        if (genreList.isNotEmpty()) {
+            this.genre = genreList.joinToString(", ")
         }
         
         this.status = when (this@SenMangaItem.status?.lowercase()) {
