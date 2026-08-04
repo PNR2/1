@@ -39,11 +39,11 @@ abstract class SenManga : KeiSource() {
     // ================== Popular / Browse ==================
     override suspend fun getPopularManga(page: Int): MangasPage {
         if (page > 1) return MangasPage(emptyList(), false)
-        
+
         val response = client.get("$baseUrl/api/popular", apiHeaders)
         val apiResponse = response.parseAs<SenMangaListResponse>()
         val mangas = apiResponse.getMangas(baseUrl)
-        
+
         return MangasPage(mangas, false)
     }
 
@@ -54,15 +54,15 @@ abstract class SenManga : KeiSource() {
         val response = client.get("$baseUrl/api/recentAdded?limit=$limit&offset=$offset", apiHeaders)
         val apiResponse = response.parseAs<SenMangaListResponse>()
         val mangas = apiResponse.getMangas(baseUrl)
-        
+
         return MangasPage(mangas, mangas.size >= limit)
     }
 
     // ================== Search ==================
     override suspend fun getSearchMangaList(page: Int, query: String, filters: FilterList): MangasPage {
         val (searchUrl, hasNextPage) = if (query.isNotBlank()) {
-            if (page > 1) return MangasPage(emptyList(), false) 
-            
+            if (page > 1) return MangasPage(emptyList(), false)
+
             val url = "$baseUrl/api/ajaxsearch".toHttpUrl().newBuilder()
                 .addQueryParameter("title", query)
                 .build()
@@ -78,30 +78,28 @@ abstract class SenManga : KeiSource() {
 
         val response = client.get(searchUrl, apiHeaders)
         val responseData = response.body.string()
-        
+
         val parsedJson = json.parseToJsonElement(responseData)
         val jsonArray = try {
             parsedJson.jsonArray
         } catch (e: Exception) {
             parsedJson.jsonObject["data"]?.jsonArray ?: return MangasPage(emptyList(), false)
         }
-        
+
         val mangas = jsonArray.map { element ->
             json.decodeFromJsonElement<SenMangaItem>(element).toSManga(baseUrl)
         }
-        
+
         return MangasPage(mangas, hasNextPage && mangas.isNotEmpty())
     }
 
-    // ================== Manga Details & Chapter List ==================
+    // ================== Chapter List ==================
     override suspend fun fetchMangaUpdate(
         manga: SManga,
         chapters: List<SChapter>,
         fetchDetails: Boolean,
         fetchChapters: Boolean,
     ): SMangaUpdate {
-        
-        // Fetch rich metadata if requested by Mihon
         val updatedManga = if (fetchDetails) {
             val response = client.get("$baseUrl/api/title/${manga.url}", apiHeaders)
             val parsedJson = json.parseToJsonElement(response.body.string()).jsonObject
@@ -113,7 +111,6 @@ abstract class SenManga : KeiSource() {
             manga
         }
 
-        // Fetch chapter list if requested by Mihon
         val updatedChapters = if (fetchChapters) {
             val response = client.get("$baseUrl/api/title/${manga.url}/chapters", apiHeaders)
             response.parseAs<SenMangaChapterListResponse>().getChaptersList()
@@ -128,15 +125,15 @@ abstract class SenManga : KeiSource() {
     override suspend fun getPageList(chapter: SChapter): List<Page> {
         val response = client.get("$baseUrl/read/${chapter.url}", apiHeaders)
         val document = response.asJsoup()
-        
+
         val scriptData = document.selectFirst("script#__NEXT_DATA__")?.data()
             ?: throw Exception("Could not find image data on page")
-            
+
         val parsed = json.parseToJsonElement(scriptData).jsonObject
         val pageProps = parsed["props"]?.jsonObject?.get("pageProps")?.jsonObject ?: parsed["pageProps"]?.jsonObject
         val urlArray = pageProps?.get("chapter")?.jsonObject?.get("pageList")?.jsonObject?.get("url")?.jsonArray
             ?: throw Exception("Failed to extract image URLs from JSON")
-            
+
         return urlArray.mapIndexed { index, element ->
             val imgUrl = element.jsonPrimitive.content
             Page(index, imageUrl = "$baseUrl/api/proxy?imageUrl=$imgUrl")
@@ -158,7 +155,7 @@ class SenMangaListResponse(
 
 @Serializable
 class SenMangaName(
-    val name: String = ""
+    val name: String = "",
 )
 
 @Serializable
@@ -178,8 +175,8 @@ class SenMangaItem(
     private fun extractNames(element: JsonElement?): String? {
         if (element == null) return null
         return try {
-            element.jsonArray.mapNotNull { 
-                it.jsonObject["name"]?.jsonPrimitive?.content 
+            element.jsonArray.mapNotNull {
+                it.jsonObject["name"]?.jsonPrimitive?.content
             }.joinToString(", ").takeIf { it.isNotEmpty() }
         } catch (e: Exception) {
             null
@@ -189,23 +186,23 @@ class SenMangaItem(
     fun toSManga(baseUrl: String) = SManga.create().apply {
         this.url = series?.id ?: this@SenMangaItem.id ?: ""
         this.title = series?.title ?: this@SenMangaItem.title ?: ""
-        
+
         val rawCover = series?.cover256 ?: this@SenMangaItem.cover256 ?: series?.cover ?: this@SenMangaItem.cover ?: ""
         this.thumbnail_url = if (rawCover.isNotEmpty()) "$baseUrl/api/proxy?imageUrl=$rawCover" else ""
-        
+
         this.author = extractNames(this@SenMangaItem.author)
         this.artist = extractNames(this@SenMangaItem.artist)
         this.description = this@SenMangaItem.description
-        
+
         val genreList = listOfNotNull(
             extractNames(this@SenMangaItem.genres),
-            extractNames(this@SenMangaItem.tags)
+            extractNames(this@SenMangaItem.tags),
         ).filter { it.isNotBlank() }
-        
+
         if (genreList.isNotEmpty()) {
             this.genre = genreList.joinToString(", ")
         }
-        
+
         this.status = when (this@SenMangaItem.status?.lowercase()) {
             "ongoing" -> SManga.ONGOING
             "completed" -> SManga.COMPLETED
@@ -247,20 +244,20 @@ class SenMangaChapter(
 ) {
     fun toSChapter() = SChapter.create().apply {
         this.url = this@SenMangaChapter.id
-        
+
         val langCode = try {
             language?.jsonObject?.get("code")?.jsonPrimitive?.content
         } catch (e: Exception) {
             language?.jsonPrimitive?.content
         }
-        
+
         val langPrefix = langCode?.let { "[$it] " } ?: ""
         this.name = langPrefix + "Chapter $chapter" + (title?.let { " - $it" } ?: "")
-        
+
         this.scanlator = try {
             group?.jsonObject?.get("title")?.jsonPrimitive?.content
         } catch (e: Exception) { null }
-        
+
         this.date_upload = runCatching {
             Instant.parseOrNull(createdAt)?.toEpochMilliseconds() ?: 0L
         }.getOrDefault(0L)
