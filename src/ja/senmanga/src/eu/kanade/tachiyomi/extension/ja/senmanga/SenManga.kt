@@ -93,6 +93,20 @@ abstract class SenManga : KeiSource() {
         return MangasPage(mangas, hasNextPage && mangas.isNotEmpty())
     }
 
+    // ================== Manga Details (Fetches Author, Description, Status) ==================
+    override suspend fun getMangaDetails(manga: SManga): SManga {
+        val response = client.get("$baseUrl/api/title/${manga.url}", apiHeaders)
+        val responseData = response.body.string()
+        
+        val parsedJson = json.parseToJsonElement(responseData).jsonObject
+        val dataObj = parsedJson["data"]?.jsonObject ?: parsedJson
+        val item = json.decodeFromJsonElement<SenMangaItem>(dataObj)
+        
+        return item.toSManga(baseUrl).apply {
+            this.url = manga.url
+        }
+    }
+
     // ================== Chapter List ==================
     override suspend fun fetchMangaUpdate(
         manga: SManga,
@@ -156,7 +170,6 @@ class SenMangaItem(
     private val tags: JsonElement? = null,
     private val status: String? = null,
 ) {
-    // Safely extract names from the unpredictable JSON structures
     private fun extractNames(element: JsonElement?): String? {
         if (element == null) return null
         return try {
