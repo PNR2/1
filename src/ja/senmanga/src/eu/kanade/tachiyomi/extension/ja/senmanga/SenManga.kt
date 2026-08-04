@@ -1,5 +1,6 @@
 package eu.kanade.tachiyomi.extension.ja.senmanga
 
+import eu.kanade.tachiyomi.source.model.Filter
 import eu.kanade.tachiyomi.source.model.FilterList
 import eu.kanade.tachiyomi.source.model.MangasPage
 import eu.kanade.tachiyomi.source.model.Page
@@ -29,7 +30,6 @@ abstract class SenManga : KeiSource() {
     override val supportsLatest = true
     private val json: Json by injectLazy()
 
-    // Spoof headers to bypass HTTP 500 errors
     private val apiHeaders by lazy {
         headers.newBuilder()
             .add("Referer", "$baseUrl/")
@@ -39,42 +39,52 @@ abstract class SenManga : KeiSource() {
 
     // ================== Popular / Browse ==================
     override suspend fun getPopularManga(page: Int): MangasPage {
-        val response = client.get("$baseUrl/api/popular?page=$page", apiHeaders)
+        if (page > 1) return MangasPage(emptyList(), false)
+        val response = client.get("$baseUrl/api/popular", apiHeaders)
         val apiResponse = response.parseAs<SenMangaListResponse>()
-        val mangas = apiResponse.getMangas(baseUrl)
+        val mangas = apiResponse.getMangas()
         
-        return MangasPage(mangas, mangas.isNotEmpty())
+        return MangasPage(mangas, false)
     }
 
     // ================== Latest ==================
     override suspend fun getLatestUpdates(page: Int): MangasPage {
-        val limit = 20 * page
-        val response = client.get("$baseUrl/api/recentAdded?limit=$limit", apiHeaders)
+        val limit = 60
+        val offset = (page - 1) * limit
+        val response = client.get("$baseUrl/api/recentAdded?limit=$limit&offset=$offset", apiHeaders)
         val apiResponse = response.parseAs<SenMangaListResponse>()
-        val mangas = apiResponse.getMangas(baseUrl)
+        val mangas = apiResponse.getMangas()
         
         return MangasPage(mangas, mangas.size >= limit)
     }
 
-    // ================== Search ==================
+    // ================== Search & Filters ==================
     override suspend fun getSearchMangaList(page: Int, query: String, filters: FilterList): MangasPage {
-        val (searchUrl, hasNextPage) = if (query.isNotBlank()) {
-            if (page > 1) return MangasPage(emptyList(), false) 
-            
-            val url = "$baseUrl/api/ajaxsearch".toHttpUrl().newBuilder()
-                .addQueryParameter("title", query)
-                .build()
-            Pair(url, false)
-        } else {
-            val offset = (page - 1) * 60
-            val url = "$baseUrl/api/adv_search".toHttpUrl().newBuilder()
-                .addQueryParameter("limit", "60")
-                .addQueryParameter("offset", offset.toString())
-                .build()
-            Pair(url, true)
+        val offset = (page - 1) * 60
+        val urlBuilder = "$baseUrl/api/adv_search".toHttpUrl().newBuilder()
+            .addQueryParameter("limit", "60")
+            .addQueryParameter("offset", offset.toString())
+
+        // Apply text query if user typed something
+        if (query.isNotBlank()) {
+            urlBuilder.addQueryParameter("title", query)
         }
 
-        val response = client.get(searchUrl, apiHeaders)
+        // Apply filters from the filter menu
+        for (filter in filters) {
+            when (filter) {
+                is SortFilter -> urlBuilder.addQueryParameter("order", filter.toUriPart())
+                is StatusFilter -> {
+                    val status = filter.toUriPart()
+                    if (status.isNotEmpty()) {
+                        urlBuilder.addQueryParameter("status", status)
+                    }
+                }
+                else -> {}
+            }
+        }
+
+        val response = client.get(urlBuilder.build(), apiHeaders)
         val responseData = response.body.string()
         
         val parsedJson = json.parseToJsonElement(responseData)
@@ -85,13 +95,55 @@ abstract class SenManga : KeiSource() {
         }
         
         val mangas = jsonArray.map { element ->
-            json.decodeFromJsonElement<SenMangaItem>(element).toSManga(baseUrl)
+            json.decodeFromJsonElement<SenMangaItem>(element).toSManga()
         }
         
-        return MangasPage(mangas, hasNextPage && mangas.isNotEmpty())
+        return MangasPage(mangas, mangas.size >= 60)
     }
 
-    // ================== Manga Details & Chapters ==================
+    // Mihon Filter Menu Implementation
+    override fun getFilterList() = FilterList(
+        Filter.Header("Filter by Status and Order"),
+        Filter.Separator(),
+        StatusFilter(),
+        SortFilter(),
+    )
+
+    private open class UriPartFilter(displayName: String, val vals: Array<Pair<String, String>>) :
+        Filter.Select<String>(displayName, vals.map { it.first }.toTypedArray()) {
+        fun toUriPart() = vals[state].second
+    }
+
+    private class SortFilter : UriPartFilter("Sort By", arrayOf(
+        Pair("Popular", "Popular"),
+        Pair("A-Z", "A-Z"),
+        Pair("Z-A", "Z-A"),
+        Pair("Latest Updates", "Update"),
+        Pair("Newest Added", "New")
+    ))
+
+    private class StatusFilter : UriPartFilter("Status", arrayOf(
+        Pair("All", ""),
+        Pair("Ongoing", "Ongoing"),
+        Pair("Completed", "Completed"),
+        Pair("Hiatus", "Hiatus"),
+        Pair("Cancelled", "Cancelled")
+    ))
+
+    // ================== Manga Details ==================
+    override suspend fun getMangaDetails(manga: SManga): SManga {
+        val response = client.get("$baseUrl/api/title/${manga.url}", apiHeaders)
+        val parsedJson = json.parseToJsonElement(response.body.string()).jsonObject
+        
+        val dataObj = parsedJson["data"]?.jsonObject ?: parsedJson
+        val item = json.decodeFromJsonElement<SenMangaItem>(dataObj)
+        
+        return item.toSManga().apply {
+            this.url = manga.url 
+        }
+    }
+
+    // ================== Chapter List ==================
     override suspend fun fetchMangaUpdate(
         manga: SManga,
         chapters: List<SChapter>,
@@ -123,7 +175,6 @@ abstract class SenManga : KeiSource() {
             
         return urlArray.mapIndexed { index, element ->
             val imgUrl = element.jsonPrimitive.content
-            // Proxy is necessary to bypass cross-origin restrictions from external image hosts
             Page(index, imageUrl = "$baseUrl/api/proxy?imageUrl=$imgUrl")
         }
     }
@@ -138,8 +189,13 @@ abstract class SenManga : KeiSource() {
 class SenMangaListResponse(
     private val data: List<SenMangaItem> = emptyList(),
 ) {
-    fun getMangas(baseUrl: String): List<SManga> = data.map { it.toSManga(baseUrl) }
+    fun getMangas(): List<SManga> = data.map { it.toSManga() }
 }
+
+@Serializable
+class SenMangaName(
+    val name: String = ""
+)
 
 @Serializable
 class SenMangaItem(
@@ -148,13 +204,37 @@ class SenMangaItem(
     private val cover: String? = null,
     @SerialName("cover_256") private val cover256: String? = null,
     private val series: SenMangaSeries? = null,
+    private val author: List<SenMangaName>? = null,
+    private val artist: List<SenMangaName>? = null,
+    private val description: String? = null,
+    private val genres: List<SenMangaName>? = null,
+    private val tags: List<SenMangaName>? = null,
+    private val status: String? = null,
 ) {
-    fun toSManga(baseUrl: String) = SManga.create().apply {
+    fun toSManga() = SManga.create().apply {
         this.url = series?.id ?: this@SenMangaItem.id ?: ""
         this.title = series?.title ?: this@SenMangaItem.title ?: ""
         
         val rawCover = series?.cover256 ?: this@SenMangaItem.cover256 ?: series?.cover ?: this@SenMangaItem.cover ?: ""
-        this.thumbnail_url = if (rawCover.isNotEmpty()) "$baseUrl/api/proxy?imageUrl=$rawCover" else ""
+        this.thumbnail_url = if (rawCover.isNotEmpty()) "https://senmanga.com/api/proxy?imageUrl=$rawCover" else ""
+        
+        // Rich Metadata Parsing
+        this.author = this@SenMangaItem.author?.joinToString { it.name }
+        this.artist = this@SenMangaItem.artist?.joinToString { it.name }
+        this.description = this@SenMangaItem.description
+        
+        val allTags = (this@SenMangaItem.genres.orEmpty() + this@SenMangaItem.tags.orEmpty()).map { it.name }
+        if (allTags.isNotEmpty()) {
+            this.genre = allTags.joinToString()
+        }
+        
+        this.status = when (this@SenMangaItem.status?.lowercase()) {
+            "ongoing" -> SManga.ONGOING
+            "completed" -> SManga.COMPLETED
+            "cancelled" -> SManga.CANCELLED
+            "hiatus" -> SManga.ON_HIATUS
+            else -> SManga.UNKNOWN
+        }
     }
 }
 
