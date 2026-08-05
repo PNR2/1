@@ -123,6 +123,11 @@ abstract class SenManga : KeiSource() {
 
     // ================== Page List (Images) ==================
     override suspend fun getPageList(chapter: SChapter): List<Page> {
+        // Prevent crashes on external chapters and guide the user
+        if (chapter.url.startsWith("http")) {
+            throw Exception("This chapter is externally hosted. Tap the 3 dots (⋮) and select 'Open in WebView' to read it.")
+        }
+
         val response = client.get("$baseUrl/read/${chapter.url}", apiHeaders)
         val document = response.asJsoup()
 
@@ -141,7 +146,15 @@ abstract class SenManga : KeiSource() {
     }
 
     override fun getMangaUrl(manga: SManga): String = "$baseUrl/title/${manga.url}"
-    override fun getChapterUrl(chapter: SChapter): String = "$baseUrl/read/${chapter.url}"
+    
+    // Route external chapters appropriately
+    override fun getChapterUrl(chapter: SChapter): String {
+        return if (chapter.url.startsWith("http")) {
+            chapter.url
+        } else {
+            "$baseUrl/read/${chapter.url}"
+        }
+    }
 }
 
 // ================== DTO Models ==================
@@ -226,7 +239,6 @@ class SenMangaChapterListResponse(
     private val data: List<SenMangaChapter> = emptyList(),
 ) {
     fun getChaptersList(): List<SChapter> = data
-        .filter { it.pages > 0 && it.externalUrl == null }
         .map { it.toSChapter() }
         .sortedByDescending { it.date_upload }
 }
@@ -243,7 +255,8 @@ class SenMangaChapter(
     val externalUrl: String? = null,
 ) {
     fun toSChapter() = SChapter.create().apply {
-        this.url = this@SenMangaChapter.id
+        // Use external URL if it exists, otherwise use standard ID
+        this.url = this@SenMangaChapter.externalUrl ?: this@SenMangaChapter.id
 
         val langCode = try {
             language?.jsonObject?.get("code")?.jsonPrimitive?.content
@@ -252,7 +265,9 @@ class SenMangaChapter(
         }
 
         val langPrefix = langCode?.let { "[$it] " } ?: ""
-        this.name = langPrefix + "Chapter $chapter" + (title?.let { " - $it" } ?: "")
+        val externalTag = if (this@SenMangaChapter.externalUrl != null) " 🔗" else ""
+        
+        this.name = langPrefix + "Chapter $chapter" + (title?.let { " - $it" } ?: "") + externalTag
 
         this.scanlator = try {
             group?.jsonObject?.get("title")?.jsonPrimitive?.content
