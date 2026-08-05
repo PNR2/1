@@ -123,9 +123,11 @@ abstract class SenManga : KeiSource() {
 
     // ================== Page List (Images) ==================
     override suspend fun getPageList(chapter: SChapter): List<Page> {
-        // Prevent crashes on external chapters and guide the user
+        // Prevent download crashes by serving a clean placeholder image for external links
         if (chapter.url.startsWith("http")) {
-            throw Exception("This chapter is externally hosted. Tap the 3 dots (⋮) and select 'Open in WebView' to read it.")
+            val placeholderText = "Use+Webview+to+Read+this+chapter.%5Cn%5CnBecause+SenManga+Don't+Have+File+to+Load,+Its+an+External+link.%5Cn%5CnWhich+is+Inaccessible+for+Mihon."
+            val placeholderUrl = "https://placehold.co/1080x1920/292929/FFF?text=$placeholderText"
+            return listOf(Page(0, imageUrl = placeholderUrl))
         }
 
         val response = client.get("$baseUrl/read/${chapter.url}", apiHeaders)
@@ -253,7 +255,6 @@ class SenMangaChapter(
     val externalUrl: String? = null,
 ) {
     fun toSChapter() = SChapter.create().apply {
-        // Use external URL if it exists, otherwise use standard ID
         this.url = this@SenMangaChapter.externalUrl ?: this@SenMangaChapter.id
 
         val langCode = try {
