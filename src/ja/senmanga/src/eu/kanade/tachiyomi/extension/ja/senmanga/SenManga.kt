@@ -244,7 +244,7 @@ class SenMangaChapterListResponse(
 ) {
     fun getChaptersList(): List<SChapter> = data
         .map { it.toSChapter() }
-        .sortedByDescending { it.date_upload }
+        .sortedWith(compareByDescending<SChapter> { it.chapter_number }.thenByDescending { it.date_upload })
 }
 
 @Serializable
