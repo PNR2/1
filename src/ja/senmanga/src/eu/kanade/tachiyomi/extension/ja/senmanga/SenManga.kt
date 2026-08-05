@@ -112,9 +112,26 @@ abstract class SenManga : KeiSource() {
         }
 
         val updatedChapters = if (fetchChapters) {
-            // Force SenManga to return ALL chapters, ignoring their default pagination limits
-            val response = client.get("$baseUrl/api/title/${manga.url}/chapters?limit=2000", apiHeaders)
-            response.parseAs<SenMangaChapterListResponse>().getChaptersList()
+            val allChapters = mutableListOf<SChapter>()
+            var offset = 0
+            val limit = 100 // SenManga's maximum internal limit
+
+            // Loop to paginate and fetch EVERY missing chapter
+            while (true) {
+                val response = client.get("$baseUrl/api/title/${manga.url}/chapters?limit=$limit&offset=$offset", apiHeaders)
+                val pageData = response.parseAs<SenMangaChapterListResponse>()
+
+                val pageChapters = pageData.data.map { it.toSChapter() }
+                allChapters.addAll(pageChapters)
+
+                if (pageData.data.size < limit) {
+                    break
+                }
+                offset += limit
+            }
+
+            // Sort everything numerically descending, then by date
+            allChapters.sortedWith(compareByDescending<SChapter> { it.chapter_number }.thenByDescending { it.date_upload })
         } else {
             chapters
         }
@@ -241,12 +258,8 @@ class SenMangaSeries(
 
 @Serializable
 class SenMangaChapterListResponse(
-    private val data: List<SenMangaChapter> = emptyList(),
-) {
-    fun getChaptersList(): List<SChapter> = data
-        .map { it.toSChapter() }
-        .sortedWith(compareByDescending<SChapter> { it.chapter_number }.thenByDescending { it.date_upload })
-}
+    val data: List<SenMangaChapter> = emptyList(),
+)
 
 @Serializable
 class SenMangaChapter(
@@ -277,9 +290,9 @@ class SenMangaChapter(
         this.chapter_number = if (cleanChapter.isNotEmpty() && cleanChapter.toFloatOrNull() != null) {
             cleanChapter.toFloat()
         } else {
-            val cleanTitle = title?.replace(Regex("""\[.*?\]"""), "") ?: ""
-            val numRegex = Regex("""(\d+(?:\.\d+)?)""")
-            numRegex.find(cleanTitle)?.value?.toFloatOrNull() ?: 0f
+            // Aggressive fallback regex search against the fully built name
+            val numRegex = Regex("""(?i)(?:chapter|ch)\s*(\d+(?:\.\d+)?)""")
+            numRegex.find(this.name)?.groupValues?.get(1)?.toFloatOrNull() ?: -1f
         }
 
         this.scanlator = try {
