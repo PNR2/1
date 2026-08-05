@@ -112,7 +112,8 @@ abstract class SenManga : KeiSource() {
         }
 
         val updatedChapters = if (fetchChapters) {
-            val response = client.get("$baseUrl/api/title/${manga.url}/chapters", apiHeaders)
+            // Force SenManga to return ALL chapters, ignoring their default pagination limits
+            val response = client.get("$baseUrl/api/title/${manga.url}/chapters?limit=2000", apiHeaders)
             response.parseAs<SenMangaChapterListResponse>().getChaptersList()
         } else {
             chapters
@@ -271,8 +272,15 @@ class SenMangaChapter(
         val externalTag = if (this@SenMangaChapter.externalUrl != null) " 🔗" else ""
         this.name = langPrefix + "Chapter $chapter" + (title?.let { " - $it" } ?: "") + externalTag
 
-        // Explicitly tell Mihon the chapter number so it ignores language codes like es-419
-        this.chapter_number = chapter.toFloatOrNull() ?: -1f
+        // Bulletproof parsing to stop Mihon from converting random strings like "es-419" into chapter numbers
+        val cleanChapter = chapter.trim()
+        this.chapter_number = if (cleanChapter.isNotEmpty() && cleanChapter.toFloatOrNull() != null) {
+            cleanChapter.toFloat()
+        } else {
+            val cleanTitle = title?.replace(Regex("""\[.*?\]"""), "") ?: ""
+            val numRegex = Regex("""(\d+(?:\.\d+)?)""")
+            numRegex.find(cleanTitle)?.value?.toFloatOrNull() ?: 0f
+        }
 
         this.scanlator = try {
             group?.jsonObject?.get("title")?.jsonPrimitive?.content
