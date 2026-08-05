@@ -123,10 +123,14 @@ abstract class SenManga : KeiSource() {
 
     // ================== Page List (Images) ==================
     override suspend fun getPageList(chapter: SChapter): List<Page> {
-        // Prevent download crashes by serving a clean placeholder image for external links
+        // Serve a clean PNG placeholder image for external links with exact URL encoding
         if (chapter.url.startsWith("http")) {
-            val placeholderText = "Use+Webview+to+Read+this+chapter.%5Cn%5CnBecause+SenManga+Don't+Have+File+to+Load,+Its+an+External+link.%5Cn%5CnWhich+is+Inaccessible+for+Mihon."
-            val placeholderUrl = "https://placehold.co/1080x1920/292929/FFF?text=$placeholderText"
+            val placeholderUrl = buildString {
+                append("https://placehold.co/1080x1920/292929/ffffff.png?text=")
+                append("Use+Webview+to+Read+this+chapter.%5Cn%5Cn")
+                append("Because+SenManga+Don%27t+Have+File+to+Load%2C+Its+an+External+link.%5Cn%5Cn")
+                append("Which+is+Inaccessible+for+Mihon.")
+            }
             return listOf(Page(0, imageUrl = placeholderUrl))
         }
 
