@@ -146,14 +146,12 @@ abstract class SenManga : KeiSource() {
     }
 
     override fun getMangaUrl(manga: SManga): String = "$baseUrl/title/${manga.url}"
-    
+
     // Route external chapters appropriately
-    override fun getChapterUrl(chapter: SChapter): String {
-        return if (chapter.url.startsWith("http")) {
-            chapter.url
-        } else {
-            "$baseUrl/read/${chapter.url}"
-        }
+    override fun getChapterUrl(chapter: SChapter): String = if (chapter.url.startsWith("http")) {
+        chapter.url
+    } else {
+        "$baseUrl/read/${chapter.url}"
     }
 }
 
@@ -266,7 +264,6 @@ class SenMangaChapter(
 
         val langPrefix = langCode?.let { "[$it] " } ?: ""
         val externalTag = if (this@SenMangaChapter.externalUrl != null) " 🔗" else ""
-        
         this.name = langPrefix + "Chapter $chapter" + (title?.let { " - $it" } ?: "") + externalTag
 
         this.scanlator = try {
