@@ -270,6 +270,9 @@ class SenMangaChapter(
         val langPrefix = langCode?.let { "[$it] " } ?: ""
         val externalTag = if (this@SenMangaChapter.externalUrl != null) " 🔗" else ""
         this.name = langPrefix + "Chapter $chapter" + (title?.let { " - $it" } ?: "") + externalTag
+        
+        // Explicitly tell Mihon the chapter number so it ignores language codes like es-419
+        this.chapter_number = chapter.toFloatOrNull() ?: -1f
 
         this.scanlator = try {
             group?.jsonObject?.get("title")?.jsonPrimitive?.content
