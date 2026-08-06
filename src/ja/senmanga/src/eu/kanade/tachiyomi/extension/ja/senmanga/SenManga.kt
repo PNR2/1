@@ -5,6 +5,7 @@ import android.content.SharedPreferences
 import androidx.preference.ListPreference
 import androidx.preference.PreferenceScreen
 import eu.kanade.tachiyomi.source.ConfigurableSource
+import eu.kanade.tachiyomi.source.model.Filter
 import eu.kanade.tachiyomi.source.model.FilterList
 import eu.kanade.tachiyomi.source.model.MangasPage
 import eu.kanade.tachiyomi.source.model.Page
@@ -98,7 +99,14 @@ abstract class SenManga :
         return MangasPage(mangas, mangas.size >= limit)
     }
 
-    // ================== Search ==================
+    // ================== Filters & Search ==================
+    override fun getFilterList() = FilterList(
+        Filter.Header("Note: Filters are ignored if doing a text search"),
+        Filter.Separator(),
+        StatusFilter(),
+        GenreFilter(),
+    )
+
     override suspend fun getSearchMangaList(page: Int, query: String, filters: FilterList): MangasPage {
         val (searchUrl, hasNextPage) = if (query.isNotBlank()) {
             if (page > 1) return MangasPage(emptyList(), false)
@@ -109,11 +117,28 @@ abstract class SenManga :
             Pair(url, false)
         } else {
             val offset = (page - 1) * 60
-            val url = "$baseUrl/api/adv_search".toHttpUrl().newBuilder()
+            val urlBuilder = "$baseUrl/api/adv_search".toHttpUrl().newBuilder()
                 .addQueryParameter("limit", "60")
                 .addQueryParameter("offset", offset.toString())
-                .build()
-            Pair(url, true)
+
+            filters.forEach { filter ->
+                when (filter) {
+                    is StatusFilter -> {
+                        if (filter.toUriPart().isNotEmpty()) {
+                            urlBuilder.addQueryParameter("status", filter.toUriPart())
+                        }
+                    }
+                    is GenreFilter -> {
+                        val selected = filter.state.filter { it.state }.map { it.valID }
+                        selected.forEach { genre ->
+                            // Using standard array parameter format for multiple genres
+                            urlBuilder.addQueryParameter("genre[]", genre)
+                        }
+                    }
+                }
+            }
+
+            Pair(urlBuilder.build(), true)
         }
 
         val response = client.get(searchUrl, apiHeaders)
@@ -154,7 +179,7 @@ abstract class SenManga :
         val updatedChapters = if (fetchChapters) {
             val allChapters = mutableListOf<SChapter>()
             var offset = 0
-            val limit = 500 // Increased chunk size to reduce total network requests
+            val limit = 500
 
             try {
                 while (true) {
@@ -170,14 +195,12 @@ abstract class SenManga :
                     if (pageData.data.size < limit) break
                     offset += limit
                     if (offset >= 5000) break
-                    delay(400) // Increased delay to appease Cloudflare/DDoS protection
+                    delay(400)
                 }
             } catch (e: Exception) {
-                // If we get blocked halfway, don't crash. Just return what we successfully grabbed.
                 if (allChapters.isEmpty()) throw e
             }
 
-            // 1. Calculate the Language Breakdown
             val langCounts = allChapters.groupingBy { ch ->
                 Regex("""\[(.*?)\]""").find(ch.name)?.groupValues?.get(1) ?: "unknown"
             }.eachCount()
@@ -186,11 +209,9 @@ abstract class SenManga :
                 .sortedByDescending { it.value }
                 .joinToString("\n") { "• [${it.key}]: ${it.value} chapters" }
 
-            // 2. Inject breakdown into description (careful not to duplicate it on refresh)
             val cleanDescription = updatedManga.description?.substringBefore("\n\n=== Language Breakdown ===") ?: ""
             updatedManga.description = "$cleanDescription\n\n=== Language Breakdown ===\n$breakdownText"
 
-            // 3. Filter chapters by user preference
             val prefLang = preferences.getString("PREF_LANG", "all") ?: "all"
             val filteredChapters = if (prefLang == "all") {
                 allChapters
@@ -201,7 +222,6 @@ abstract class SenManga :
                 }
             }
 
-            // Sort correctly
             filteredChapters.sortedWith(compareByDescending<SChapter> { it.chapter_number }.thenByDescending { it.date_upload })
         } else {
             chapters
@@ -245,6 +265,51 @@ abstract class SenManga :
         chapter.url
     } else {
         "$baseUrl/read/${chapter.url}"
+    }
+
+    // ================== Filter Implementations ==================
+
+    private class StatusFilter : Filter.Select<String>("Status", arrayOf("All", "Ongoing", "Completed", "Cancelled", "Hiatus")) {
+        fun toUriPart() = when (state) {
+            1 -> "ongoing"
+            2 -> "completed"
+            3 -> "cancelled"
+            4 -> "hiatus"
+            else -> ""
+        }
+    }
+
+    private class GenreCheckBox(name: String, val valID: String) : Filter.CheckBox(name)
+    private class GenreFilter : Filter.Group<GenreCheckBox>("Genres", genres.map { GenreCheckBox(it.first, it.second) })
+
+    companion object {
+        private val genres = listOf(
+            Pair("Action", "Action"),
+            Pair("Adventure", "Adventure"),
+            Pair("Comedy", "Comedy"),
+            Pair("Drama", "Drama"),
+            Pair("Ecchi", "Ecchi"),
+            Pair("Fantasy", "Fantasy"),
+            Pair("Harem", "Harem"),
+            Pair("Historical", "Historical"),
+            Pair("Horror", "Horror"),
+            Pair("Josei", "Josei"),
+            Pair("Martial Arts", "Martial_Arts"),
+            Pair("Mature", "Mature"),
+            Pair("Mecha", "Mecha"),
+            Pair("Mystery", "Mystery"),
+            Pair("Psychological", "Psychological"),
+            Pair("Romance", "Romance"),
+            Pair("School Life", "School_Life"),
+            Pair("Sci-Fi", "Sci-Fi"),
+            Pair("Seinen", "Seinen"),
+            Pair("Shoujo", "Shoujo"),
+            Pair("Shounen", "Shounen"),
+            Pair("Slice of Life", "Slice_of_Life"),
+            Pair("Sports", "Sports"),
+            Pair("Supernatural", "Supernatural"),
+            Pair("Tragedy", "Tragedy"),
+        )
     }
 }
 
