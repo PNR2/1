@@ -100,7 +100,7 @@ abstract class SenManga :
     }
 
     // ================== Filters & Search ==================
-    override fun getFilterList() = FilterList(
+    override fun getFilterList(data: JsonElement?) = FilterList(
         Filter.Header("Note: Filters are ignored if doing a text search"),
         Filter.Separator(),
         StatusFilter(),
@@ -135,6 +135,7 @@ abstract class SenManga :
                             urlBuilder.addQueryParameter("genre[]", genre)
                         }
                     }
+                    else -> {}
                 }
             }
 
