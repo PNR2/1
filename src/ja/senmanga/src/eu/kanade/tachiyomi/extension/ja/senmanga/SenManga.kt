@@ -32,7 +32,9 @@ import uy.kohesive.injekt.injectLazy
 import kotlin.time.Instant
 
 @Source
-abstract class SenManga : KeiSource(), ConfigurableSource {
+abstract class SenManga :
+    KeiSource(),
+    ConfigurableSource {
 
     override val supportsLatest = true
     private val json: Json by injectLazy()
@@ -54,18 +56,18 @@ abstract class SenManga : KeiSource(), ConfigurableSource {
             key = "PREF_LANG"
             title = "Preferred Language"
             entries = arrayOf(
-                "All Languages", 
-                "English (en)", 
-                "Spanish (es / es-419)", 
-                "Portuguese (pt / pt-BR)", 
-                "Russian (ru)", 
-                "Indonesian (id)", 
-                "Vietnamese (vi)", 
-                "French (fr)", 
-                "Italian (it)", 
+                "All Languages",
+                "English (en)",
+                "Spanish (es / es-419)",
+                "Portuguese (pt / pt-BR)",
+                "Russian (ru)",
+                "Indonesian (id)",
+                "Vietnamese (vi)",
+                "French (fr)",
+                "Italian (it)",
                 "German (de)",
                 "Thai (th)",
-                "Polish (pl)"
+                "Polish (pl)",
             )
             entryValues = arrayOf("all", "en", "es", "pt", "ru", "id", "vi", "fr", "it", "de", "th", "pl")
             setDefaultValue("all")
@@ -152,7 +154,7 @@ abstract class SenManga : KeiSource(), ConfigurableSource {
         val updatedChapters = if (fetchChapters) {
             val allChapters = mutableListOf<SChapter>()
             var offset = 0
-            val limit = 100 
+            val limit = 100
 
             try {
                 while (true) {
