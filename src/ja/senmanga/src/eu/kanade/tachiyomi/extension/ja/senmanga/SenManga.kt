@@ -11,6 +11,7 @@ import keiyoushi.annotation.Source
 import keiyoushi.network.get
 import keiyoushi.source.KeiSource
 import keiyoushi.utils.parseAs
+import kotlinx.coroutines.delay
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -116,18 +117,35 @@ abstract class SenManga : KeiSource() {
             var offset = 0
             val limit = 100 // SenManga's maximum internal limit
 
-            // Loop to paginate and fetch EVERY missing chapter
-            while (true) {
-                val response = client.get("$baseUrl/api/title/${manga.url}/chapters?limit=$limit&offset=$offset", apiHeaders)
-                val pageData = response.parseAs<SenMangaChapterListResponse>()
+            try {
+                // Loop to paginate and fetch EVERY missing chapter
+                while (true) {
+                    val response = client.get("$baseUrl/api/title/${manga.url}/chapters?limit=$limit&offset=$offset", apiHeaders)
+                    
+                    // Stop politely if the server gets overwhelmed instead of crashing
+                    if (!response.isSuccessful) break
 
-                val pageChapters = pageData.data.map { it.toSChapter() }
-                allChapters.addAll(pageChapters)
+                    val pageData = response.parseAs<SenMangaChapterListResponse>()
+                    if (pageData.data.isEmpty()) break
 
-                if (pageData.data.size < limit) {
-                    break
+                    val pageChapters = pageData.data.map { it.toSChapter() }
+                    allChapters.addAll(pageChapters)
+
+                    if (pageData.data.size < limit) break
+                    
+                    offset += limit
+                    
+                    // Hard cap at 5,000 chapters to prevent infinite loops
+                    if (offset >= 5000) break
+                    
+                    // Add a tiny delay so we don't DDoS SenManga's server and trigger 500s
+                    delay(200)
                 }
-                offset += limit
+            } catch (e: Exception) {
+                // If Mihon times out on page 15, just catch the error and keep the 1500 chapters we already found!
+                if (allChapters.isEmpty()) {
+                    throw e // Only show an error if we failed on the very first page
+                }
             }
 
             // Sort everything numerically descending, then by date
