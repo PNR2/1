@@ -154,7 +154,7 @@ abstract class SenManga :
         val updatedChapters = if (fetchChapters) {
             val allChapters = mutableListOf<SChapter>()
             var offset = 0
-            val limit = 100
+            val limit = 500 // Increased chunk size to reduce total network requests
 
             try {
                 while (true) {
@@ -170,9 +170,10 @@ abstract class SenManga :
                     if (pageData.data.size < limit) break
                     offset += limit
                     if (offset >= 5000) break
-                    delay(200)
+                    delay(400) // Increased delay to appease Cloudflare/DDoS protection
                 }
             } catch (e: Exception) {
+                // If we get blocked halfway, don't crash. Just return what we successfully grabbed.
                 if (allChapters.isEmpty()) throw e
             }
 
