@@ -121,7 +121,7 @@ abstract class SenManga : KeiSource() {
                 // Loop to paginate and fetch EVERY missing chapter
                 while (true) {
                     val response = client.get("$baseUrl/api/title/${manga.url}/chapters?limit=$limit&offset=$offset", apiHeaders)
-                    
+
                     // Stop politely if the server gets overwhelmed instead of crashing
                     if (!response.isSuccessful) break
 
@@ -132,12 +132,12 @@ abstract class SenManga : KeiSource() {
                     allChapters.addAll(pageChapters)
 
                     if (pageData.data.size < limit) break
-                    
+
                     offset += limit
-                    
+
                     // Hard cap at 5,000 chapters to prevent infinite loops
                     if (offset >= 5000) break
-                    
+
                     // Add a tiny delay so we don't DDoS SenManga's server and trigger 500s
                     delay(200)
                 }
