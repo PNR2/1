@@ -1,5 +1,9 @@
 package eu.kanade.tachiyomi.extension.ja.senmanga
 
+import android.app.Application
+import android.content.SharedPreferences
+import androidx.preference.ListPreference
+import androidx.preference.PreferenceScreen
 import eu.kanade.tachiyomi.source.model.FilterList
 import eu.kanade.tachiyomi.source.model.MangasPage
 import eu.kanade.tachiyomi.source.model.Page
@@ -9,6 +13,7 @@ import eu.kanade.tachiyomi.source.model.SMangaUpdate
 import eu.kanade.tachiyomi.util.asJsoup
 import keiyoushi.annotation.Source
 import keiyoushi.network.get
+import keiyoushi.source.ConfigurableSource
 import keiyoushi.source.KeiSource
 import keiyoushi.utils.parseAs
 import kotlinx.coroutines.delay
@@ -21,11 +26,13 @@ import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import okhttp3.HttpUrl.Companion.toHttpUrl
+import uy.kohesive.injekt.Injekt
+import uy.kohesive.injekt.api.get
 import uy.kohesive.injekt.injectLazy
 import kotlin.time.Instant
 
 @Source
-abstract class SenManga : KeiSource() {
+abstract class SenManga : KeiSource(), ConfigurableSource {
 
     override val supportsLatest = true
     private val json: Json by injectLazy()
@@ -35,6 +42,36 @@ abstract class SenManga : KeiSource() {
             .add("Referer", "$baseUrl/")
             .add("Accept", "application/json, text/plain, */*")
             .build()
+    }
+
+    // ================== Preferences (Language Filter) ==================
+    private val preferences: SharedPreferences by lazy {
+        Injekt.get<Application>().getSharedPreferences("source_$id", 0x0000)
+    }
+
+    override fun setupPreferenceScreen(screen: PreferenceScreen) {
+        val langPref = ListPreference(screen.context).apply {
+            key = "PREF_LANG"
+            title = "Preferred Language"
+            entries = arrayOf(
+                "All Languages", 
+                "English (en)", 
+                "Spanish (es / es-419)", 
+                "Portuguese (pt / pt-BR)", 
+                "Russian (ru)", 
+                "Indonesian (id)", 
+                "Vietnamese (vi)", 
+                "French (fr)", 
+                "Italian (it)", 
+                "German (de)",
+                "Thai (th)",
+                "Polish (pl)"
+            )
+            entryValues = arrayOf("all", "en", "es", "pt", "ru", "id", "vi", "fr", "it", "de", "th", "pl")
+            setDefaultValue("all")
+            summary = "%s\nNote: You must 'Pull to Refresh' the chapter list to apply changes."
+        }
+        screen.addPreference(langPref)
     }
 
     // ================== Popular / Browse ==================
@@ -115,14 +152,11 @@ abstract class SenManga : KeiSource() {
         val updatedChapters = if (fetchChapters) {
             val allChapters = mutableListOf<SChapter>()
             var offset = 0
-            val limit = 100 // SenManga's maximum internal limit
+            val limit = 100 
 
             try {
-                // Loop to paginate and fetch EVERY missing chapter
                 while (true) {
                     val response = client.get("$baseUrl/api/title/${manga.url}/chapters?limit=$limit&offset=$offset", apiHeaders)
-
-                    // Stop politely if the server gets overwhelmed instead of crashing
                     if (!response.isSuccessful) break
 
                     val pageData = response.parseAs<SenMangaChapterListResponse>()
@@ -132,24 +166,40 @@ abstract class SenManga : KeiSource() {
                     allChapters.addAll(pageChapters)
 
                     if (pageData.data.size < limit) break
-
                     offset += limit
-
-                    // Hard cap at 5,000 chapters to prevent infinite loops
                     if (offset >= 5000) break
-
-                    // Add a tiny delay so we don't DDoS SenManga's server and trigger 500s
                     delay(200)
                 }
             } catch (e: Exception) {
-                // If Mihon times out on page 15, just catch the error and keep the 1500 chapters we already found!
-                if (allChapters.isEmpty()) {
-                    throw e // Only show an error if we failed on the very first page
+                if (allChapters.isEmpty()) throw e
+            }
+
+            // 1. Calculate the Language Breakdown
+            val langCounts = allChapters.groupingBy { ch ->
+                Regex("""\[(.*?)\]""").find(ch.name)?.groupValues?.get(1) ?: "unknown"
+            }.eachCount()
+
+            val breakdownText = langCounts.entries
+                .sortedByDescending { it.value }
+                .joinToString("\n") { "• [${it.key}]: ${it.value} chapters" }
+
+            // 2. Inject breakdown into description (careful not to duplicate it on refresh)
+            val cleanDescription = updatedManga.description?.substringBefore("\n\n=== Language Breakdown ===") ?: ""
+            updatedManga.description = "$cleanDescription\n\n=== Language Breakdown ===\n$breakdownText"
+
+            // 3. Filter chapters by user preference
+            val prefLang = preferences.getString("PREF_LANG", "all") ?: "all"
+            val filteredChapters = if (prefLang == "all") {
+                allChapters
+            } else {
+                allChapters.filter { ch ->
+                    val code = Regex("""\[(.*?)\]""").find(ch.name)?.groupValues?.get(1) ?: ""
+                    code.startsWith(prefLang, ignoreCase = true)
                 }
             }
 
-            // Sort everything numerically descending, then by date
-            allChapters.sortedWith(compareByDescending<SChapter> { it.chapter_number }.thenByDescending { it.date_upload })
+            // Sort correctly
+            filteredChapters.sortedWith(compareByDescending<SChapter> { it.chapter_number }.thenByDescending { it.date_upload })
         } else {
             chapters
         }
@@ -159,7 +209,6 @@ abstract class SenManga : KeiSource() {
 
     // ================== Page List (Images) ==================
     override suspend fun getPageList(chapter: SChapter): List<Page> {
-        // Serve a clean PNG placeholder image for external links with exact URL encoding
         if (chapter.url.startsWith("http")) {
             val placeholderUrl = buildString {
                 append("https://placehold.co/1080x1920/292929/ffffff.png?text=")
@@ -189,7 +238,6 @@ abstract class SenManga : KeiSource() {
 
     override fun getMangaUrl(manga: SManga): String = "$baseUrl/title/${manga.url}"
 
-    // Route external chapters appropriately
     override fun getChapterUrl(chapter: SChapter): String = if (chapter.url.startsWith("http")) {
         chapter.url
     } else {
@@ -303,12 +351,10 @@ class SenMangaChapter(
         val externalTag = if (this@SenMangaChapter.externalUrl != null) " 🔗" else ""
         this.name = langPrefix + "Chapter $chapter" + (title?.let { " - $it" } ?: "") + externalTag
 
-        // Bulletproof parsing to stop Mihon from converting random strings into chapter numbers
         val cleanChapter = chapter.trim()
         this.chapter_number = if (cleanChapter.isNotEmpty() && cleanChapter.toFloatOrNull() != null) {
             cleanChapter.toFloat()
         } else {
-            // Aggressive fallback regex that handles "Ch. 232" and "Vol 1 Ch. 232"
             val numRegex = Regex("""(?i)(?:chapter|ch\.?)\s*(\d+(?:\.\d+)?)""")
             val match = numRegex.find(cleanChapter) ?: numRegex.find(this.name)
             match?.groupValues?.get(1)?.toFloatOrNull() ?: -1f
