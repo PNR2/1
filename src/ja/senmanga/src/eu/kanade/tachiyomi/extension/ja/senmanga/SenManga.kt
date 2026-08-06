@@ -285,14 +285,15 @@ class SenMangaChapter(
         val externalTag = if (this@SenMangaChapter.externalUrl != null) " 🔗" else ""
         this.name = langPrefix + "Chapter $chapter" + (title?.let { " - $it" } ?: "") + externalTag
 
-        // Bulletproof parsing to stop Mihon from converting random strings like "es-419" into chapter numbers
+        // Bulletproof parsing to stop Mihon from converting random strings into chapter numbers
         val cleanChapter = chapter.trim()
         this.chapter_number = if (cleanChapter.isNotEmpty() && cleanChapter.toFloatOrNull() != null) {
             cleanChapter.toFloat()
         } else {
-            // Aggressive fallback regex search against the fully built name
-            val numRegex = Regex("""(?i)(?:chapter|ch)\s*(\d+(?:\.\d+)?)""")
-            numRegex.find(this.name)?.groupValues?.get(1)?.toFloatOrNull() ?: -1f
+            // Aggressive fallback regex that handles "Ch. 232" and "Vol 1 Ch. 232"
+            val numRegex = Regex("""(?i)(?:chapter|ch\.?)\s*(\d+(?:\.\d+)?)""")
+            val match = numRegex.find(cleanChapter) ?: numRegex.find(this.name)
+            match?.groupValues?.get(1)?.toFloatOrNull() ?: -1f
         }
 
         this.scanlator = try {
