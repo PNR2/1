@@ -109,6 +109,7 @@ abstract class SenManga :
         TitleFilter(),
         Filter.Separator(),
         Filter.Header("Advanced Filters"),
+        OrderFilter(),
         StatusFilter(),
         DemographicFilter(),
         FormatFilter(),
@@ -142,6 +143,11 @@ abstract class SenManga :
 
             filters.forEach { filter ->
                 when (filter) {
+                    is OrderFilter -> {
+                        if (filter.toUriPart().isNotEmpty()) {
+                            urlBuilder.addQueryParameter("order", filter.toUriPart())
+                        }
+                    }
                     is StatusFilter -> {
                         if (filter.toUriPart().isNotEmpty()) {
                             urlBuilder.addQueryParameter("status", filter.toUriPart())
@@ -306,6 +312,21 @@ abstract class SenManga :
     // ================== Filter Implementations ==================
 
     private class TitleFilter : Filter.Text("Title / Keyword")
+
+    private class OrderFilter : Filter.Select<String>(
+        "Order",
+        arrayOf("A-Z", "Z-A", "Updated", "Added", "Views", "Popular"),
+    ) {
+        fun toUriPart() = when (state) {
+            0 -> "A-Z"
+            1 -> "Z-A"
+            2 -> "Updated"
+            3 -> "Added"
+            4 -> "Views"
+            5 -> "Popular"
+            else -> "A-Z"
+        }
+    }
 
     private class StatusFilter : Filter.Select<String>("Status", arrayOf("All", "Ongoing", "Completed", "Cancelled", "Hiatus")) {
         fun toUriPart() = when (state) {
