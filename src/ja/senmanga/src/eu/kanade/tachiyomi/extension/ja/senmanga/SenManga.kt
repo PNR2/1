@@ -102,21 +102,34 @@ abstract class SenManga :
 
     // ================== Filters & Search ==================
     override fun getFilterList(data: JsonElement?) = FilterList(
-        Filter.Header("Note: Filters are ignored if doing a text search"),
+        Filter.Header("Search Terms"),
+        TitleFilter(),
+        ScanlationFilter(),
         Filter.Separator(),
+        Filter.Header("Advanced Filters"),
         StatusFilter(),
         DemographicFilter(),
         FormatFilter(),
         Filter.Separator(),
+        Filter.Header("Genres: Click once to Include (✓), twice to Exclude (×)"),
         GenreFilter(),
     )
 
     override suspend fun getSearchMangaList(page: Int, query: String, filters: FilterList): MangasPage {
-        val (searchUrl, hasNextPage) = if (query.isNotBlank()) {
-            if (page > 1) return MangasPage(emptyList(), false)
+        var actualQuery = query
+        var scanlationGroup = ""
 
+        filters.filterIsInstance<Filter.Text>().forEach { filter ->
+            when (filter) {
+                is TitleFilter -> if (filter.state.isNotEmpty() && actualQuery.isBlank()) actualQuery = filter.state
+                is ScanlationFilter -> scanlationGroup = filter.state
+            }
+        }
+
+        val (searchUrl, hasNextPage) = if (actualQuery.isNotBlank() && filters.isEmpty()) {
+            if (page > 1) return MangasPage(emptyList(), false)
             val url = "$baseUrl/api/ajaxsearch".toHttpUrl().newBuilder()
-                .addQueryParameter("title", query)
+                .addQueryParameter("title", actualQuery)
                 .build()
             Pair(url, false)
         } else {
@@ -124,6 +137,9 @@ abstract class SenManga :
             val urlBuilder = "$baseUrl/api/adv_search".toHttpUrl().newBuilder()
                 .addQueryParameter("limit", "60")
                 .addQueryParameter("offset", offset.toString())
+
+            if (actualQuery.isNotBlank()) urlBuilder.addQueryParameter("title", actualQuery)
+            if (scanlationGroup.isNotBlank()) urlBuilder.addQueryParameter("group", scanlationGroup)
 
             filters.forEach { filter ->
                 when (filter) {
@@ -143,9 +159,12 @@ abstract class SenManga :
                         }
                     }
                     is GenreFilter -> {
-                        val selected = filter.state.filter { it.state }.map { it.valID }
-                        selected.forEach { genre ->
-                            urlBuilder.addQueryParameter("genre[]", genre)
+                        filter.state.forEach { genre ->
+                            when (genre.state) {
+                                Filter.TriState.STATE_INCLUDE -> urlBuilder.addQueryParameter("genre[]", genre.valID)
+                                Filter.TriState.STATE_EXCLUDE -> urlBuilder.addQueryParameter("exclude_genre[]", genre.valID)
+                                else -> {}
+                            }
                         }
                     }
                     else -> {}
@@ -215,7 +234,6 @@ abstract class SenManga :
                 if (allChapters.isEmpty()) throw e
             }
 
-            // 1. Calculate the Language Breakdown
             val langCounts = allChapters.groupingBy { ch ->
                 Regex("""\[(.*?)\]""").find(ch.name)?.groupValues?.get(1) ?: "unknown"
             }.eachCount()
@@ -224,7 +242,6 @@ abstract class SenManga :
                 .sortedByDescending { it.value }
                 .joinToString("\n") { "• [${it.key}]: ${it.value} chapters" }
 
-            // 2. Inject breakdown into description safely at the very bottom
             val cleanDescription = updatedManga.description?.substringBefore("\n\n=== Language Breakdown ===") ?: ""
             updatedManga.description = if (cleanDescription.isBlank()) {
                 "=== Language Breakdown ===\n$breakdownText"
@@ -232,7 +249,6 @@ abstract class SenManga :
                 "$cleanDescription\n\n=== Language Breakdown ===\n$breakdownText"
             }
 
-            // 3. Filter chapters by user preference
             val prefLang = preferences.getString("PREF_LANG", "all") ?: "all"
             val filteredChapters = if (prefLang == "all") {
                 allChapters
@@ -243,7 +259,6 @@ abstract class SenManga :
                 }
             }
 
-            // Sort correctly
             filteredChapters.sortedWith(compareByDescending<SChapter> { it.chapter_number }.thenByDescending { it.date_upload })
         } else {
             chapters
@@ -291,6 +306,9 @@ abstract class SenManga :
 
     // ================== Filter Implementations ==================
 
+    private class TitleFilter : Filter.Text("Title / Keyword")
+    private class ScanlationFilter : Filter.Text("Scanlation Group (If supported)")
+
     private class StatusFilter : Filter.Select<String>("Status", arrayOf("All", "Ongoing", "Completed", "Cancelled", "Hiatus")) {
         fun toUriPart() = when (state) {
             1 -> "ongoing"
@@ -324,8 +342,8 @@ abstract class SenManga :
         }
     }
 
-    private class GenreCheckBox(name: String, val valID: String) : Filter.CheckBox(name)
-    private class GenreFilter : Filter.Group<GenreCheckBox>("Genres", genres.map { GenreCheckBox(it.first, it.second) })
+    private class GenreTriState(name: String, val valID: String) : Filter.TriState(name)
+    private class GenreFilter : Filter.Group<GenreTriState>("Genres", genres.map { GenreTriState(it.first, it.second) })
 
     companion object {
         private val genres = listOf(
@@ -388,6 +406,10 @@ class SenMangaItem(
     private val status: String? = null,
     @SerialName("altTitles") private val altTitles: JsonElement? = null,
     @SerialName("alt_titles") private val altTitlesFallback: JsonElement? = null,
+    private val format: JsonElement? = null,
+    private val demographic: JsonElement? = null,
+    private val released: JsonElement? = null,
+    private val year: JsonElement? = null,
 ) {
     private fun extractNames(element: JsonElement?): String? {
         if (element == null) return null
@@ -420,26 +442,53 @@ class SenMangaItem(
         val rawCover = series?.cover256 ?: this@SenMangaItem.cover256 ?: series?.cover ?: this@SenMangaItem.cover ?: ""
         this.thumbnail_url = if (rawCover.isNotEmpty()) "$baseUrl/api/proxy?imageUrl=$rawCover" else ""
 
-        this.author = extractNames(this@SenMangaItem.author)
-        this.artist = extractNames(this@SenMangaItem.artist)
+        val rawAuthor = extractNames(this@SenMangaItem.author)
+        this.author = rawAuthor
+        
+        val rawArtist = extractNames(this@SenMangaItem.artist)
+        this.artist = rawArtist
 
-        val rawAltTitles = extractAltTitles(this@SenMangaItem.altTitles) ?: extractAltTitles(this@SenMangaItem.altTitlesFallback)
+        // Compile Metadata
+        val metadataList = mutableListOf<String>()
+        if (!rawAuthor.isNullOrBlank()) metadataList.add("Author: $rawAuthor")
+        if (!rawArtist.isNullOrBlank()) metadataList.add("Artist: $rawArtist")
+
+        val formatStr = extractNames(this@SenMangaItem.format) ?: this@SenMangaItem.format?.jsonPrimitive?.contentOrNull
+        if (!formatStr.isNullOrBlank()) metadataList.add("Format: $formatStr")
+
+        val demographicStr = extractNames(this@SenMangaItem.demographic) ?: this@SenMangaItem.demographic?.jsonPrimitive?.contentOrNull
+        if (!demographicStr.isNullOrBlank()) metadataList.add("Demographic: $demographicStr")
+
+        val releaseStr = this@SenMangaItem.released?.jsonPrimitive?.contentOrNull ?: this@SenMangaItem.year?.jsonPrimitive?.contentOrNull
+        if (!releaseStr.isNullOrBlank()) metadataList.add("Released: $releaseStr")
+
+        val rawGenres = extractNames(this@SenMangaItem.genres)
+        if (!rawGenres.isNullOrBlank()) metadataList.add("Genres: $rawGenres")
+
+        val rawTags = extractNames(this@SenMangaItem.tags)
+        if (!rawTags.isNullOrBlank()) metadataList.add("Tags: $rawTags")
+
+        // Build Description block
         val baseDesc = this@SenMangaItem.description?.trim() ?: ""
+        val rawAltTitles = extractAltTitles(this@SenMangaItem.altTitles) ?: extractAltTitles(this@SenMangaItem.altTitlesFallback)
 
-        // Append Alternate Titles to the very bottom of the base description
-        this.description = if (rawAltTitles.isNullOrBlank()) {
-            baseDesc
-        } else if (baseDesc.isBlank()) {
-            "=== Alternate Titles ===\n$rawAltTitles"
-        } else {
-            "$baseDesc\n\n=== Alternate Titles ===\n$rawAltTitles"
-        }
+        this.description = buildString {
+            if (baseDesc.isNotBlank()) {
+                append(baseDesc)
+                append("\n\n")
+            }
+            if (metadataList.isNotEmpty()) {
+                append("=== Additional Info ===\n")
+                append(metadataList.joinToString("\n"))
+                append("\n\n")
+            }
+            if (!rawAltTitles.isNullOrBlank()) {
+                append("=== Alternate Titles ===\n")
+                append(rawAltTitles)
+            }
+        }.trim()
 
-        val genreList = listOfNotNull(
-            extractNames(this@SenMangaItem.genres),
-            extractNames(this@SenMangaItem.tags),
-        ).filter { it.isNotBlank() }
-
+        val genreList = listOfNotNull(rawGenres, rawTags).filter { it.isNotBlank() }
         if (genreList.isNotEmpty()) {
             this.genre = genreList.joinToString(", ")
         }
