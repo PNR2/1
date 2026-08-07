@@ -113,6 +113,7 @@ abstract class SenManga :
         StatusFilter(),
         DemographicFilter(),
         FormatFilter(),
+        ReleasedFilter(),
         Filter.Separator(),
         Filter.Header("Genres: Click once to Include (✓), twice to Exclude (×)"),
         GenreFilter(),
@@ -121,11 +122,13 @@ abstract class SenManga :
     override suspend fun getSearchMangaList(page: Int, query: String, filters: FilterList): MangasPage {
         var actualQuery = query
         var scanlationGroup = ""
+        var releaseYear = ""
 
         filters.filterIsInstance<Filter.Text>().forEach { filter ->
             when (filter) {
                 is TitleFilter -> if (filter.state.isNotEmpty() && actualQuery.isBlank()) actualQuery = filter.state
                 is ScanlationFilter -> scanlationGroup = filter.state
+                is ReleasedFilter -> releaseYear = filter.state
             }
         }
 
@@ -143,6 +146,7 @@ abstract class SenManga :
 
             if (actualQuery.isNotBlank()) urlBuilder.addQueryParameter("title", actualQuery)
             if (scanlationGroup.isNotBlank()) urlBuilder.addQueryParameter("group", scanlationGroup)
+            if (releaseYear.isNotBlank()) urlBuilder.addQueryParameter("year", releaseYear)
 
             filters.forEach { filter ->
                 when (filter) {
@@ -311,6 +315,7 @@ abstract class SenManga :
 
     private class TitleFilter : Filter.Text("Title / Keyword")
     private class ScanlationFilter : Filter.Text("Scanlation Group (If supported)")
+    private class ReleasedFilter : Filter.Text("Released Year (e.g., 2024)")
 
     private class StatusFilter : Filter.Select<String>("Status", arrayOf("All", "Ongoing", "Completed", "Cancelled", "Hiatus")) {
         fun toUriPart() = when (state) {
@@ -414,7 +419,6 @@ class SenMangaItem(
     private val released: JsonElement? = null,
     private val year: JsonElement? = null,
 ) {
-    // Universal safety extractor: Handles nulls, primitives, array of primitives, and array of objects.
     private fun extractData(element: JsonElement?): String? {
         if (element == null) return null
         return try {
