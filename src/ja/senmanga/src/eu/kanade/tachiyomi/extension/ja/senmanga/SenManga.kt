@@ -22,6 +22,7 @@ import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.decodeFromJsonElement
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
@@ -100,10 +101,13 @@ abstract class SenManga :
     }
 
     // ================== Filters & Search ==================
-    override fun getFilterList() = FilterList(
+    override fun getFilterList(data: JsonElement?) = FilterList(
         Filter.Header("Note: Filters are ignored if doing a text search"),
         Filter.Separator(),
         StatusFilter(),
+        DemographicFilter(),
+        FormatFilter(),
+        Filter.Separator(),
         GenreFilter(),
     )
 
@@ -128,13 +132,23 @@ abstract class SenManga :
                             urlBuilder.addQueryParameter("status", filter.toUriPart())
                         }
                     }
+                    is DemographicFilter -> {
+                        if (filter.toUriPart().isNotEmpty()) {
+                            urlBuilder.addQueryParameter("demographic", filter.toUriPart())
+                        }
+                    }
+                    is FormatFilter -> {
+                        if (filter.toUriPart().isNotEmpty()) {
+                            urlBuilder.addQueryParameter("format", filter.toUriPart())
+                        }
+                    }
                     is GenreFilter -> {
                         val selected = filter.state.filter { it.state }.map { it.valID }
                         selected.forEach { genre ->
-                            // Using standard array parameter format for multiple genres
                             urlBuilder.addQueryParameter("genre[]", genre)
                         }
                     }
+                    else -> {}
                 }
             }
 
@@ -201,6 +215,7 @@ abstract class SenManga :
                 if (allChapters.isEmpty()) throw e
             }
 
+            // 1. Calculate the Language Breakdown
             val langCounts = allChapters.groupingBy { ch ->
                 Regex("""\[(.*?)\]""").find(ch.name)?.groupValues?.get(1) ?: "unknown"
             }.eachCount()
@@ -209,9 +224,15 @@ abstract class SenManga :
                 .sortedByDescending { it.value }
                 .joinToString("\n") { "• [${it.key}]: ${it.value} chapters" }
 
+            // 2. Inject breakdown into description safely at the very bottom
             val cleanDescription = updatedManga.description?.substringBefore("\n\n=== Language Breakdown ===") ?: ""
-            updatedManga.description = "$cleanDescription\n\n=== Language Breakdown ===\n$breakdownText"
+            updatedManga.description = if (cleanDescription.isBlank()) {
+                "=== Language Breakdown ===\n$breakdownText"
+            } else {
+                "$cleanDescription\n\n=== Language Breakdown ===\n$breakdownText"
+            }
 
+            // 3. Filter chapters by user preference
             val prefLang = preferences.getString("PREF_LANG", "all") ?: "all"
             val filteredChapters = if (prefLang == "all") {
                 allChapters
@@ -222,6 +243,7 @@ abstract class SenManga :
                 }
             }
 
+            // Sort correctly
             filteredChapters.sortedWith(compareByDescending<SChapter> { it.chapter_number }.thenByDescending { it.date_upload })
         } else {
             chapters
@@ -279,6 +301,29 @@ abstract class SenManga :
         }
     }
 
+    private class DemographicFilter : Filter.Select<String>("Demographic", arrayOf("All", "Shounen", "Shoujo", "Seinen", "Josei")) {
+        fun toUriPart() = when (state) {
+            1 -> "Shounen"
+            2 -> "Shoujo"
+            3 -> "Seinen"
+            4 -> "Josei"
+            else -> ""
+        }
+    }
+
+    private class FormatFilter : Filter.Select<String>("Format", arrayOf("All", "Manga", "Manhwa", "Manhua", "Webtoon", "One-Shot", "Doujinshi", "Adaptation")) {
+        fun toUriPart() = when (state) {
+            1 -> "Manga"
+            2 -> "Manhwa"
+            3 -> "Manhua"
+            4 -> "Webtoon"
+            5 -> "One-Shot"
+            6 -> "Doujinshi"
+            7 -> "Adaptation"
+            else -> ""
+        }
+    }
+
     private class GenreCheckBox(name: String, val valID: String) : Filter.CheckBox(name)
     private class GenreFilter : Filter.Group<GenreCheckBox>("Genres", genres.map { GenreCheckBox(it.first, it.second) })
 
@@ -293,6 +338,7 @@ abstract class SenManga :
             Pair("Harem", "Harem"),
             Pair("Historical", "Historical"),
             Pair("Horror", "Horror"),
+            Pair("Isekai", "Isekai"),
             Pair("Josei", "Josei"),
             Pair("Martial Arts", "Martial_Arts"),
             Pair("Mature", "Mature"),
@@ -340,12 +386,27 @@ class SenMangaItem(
     private val genres: JsonElement? = null,
     private val tags: JsonElement? = null,
     private val status: String? = null,
+    @SerialName("altTitles") private val altTitles: JsonElement? = null,
+    @SerialName("alt_titles") private val altTitlesFallback: JsonElement? = null,
 ) {
     private fun extractNames(element: JsonElement?): String? {
         if (element == null) return null
         return try {
             element.jsonArray.mapNotNull {
                 it.jsonObject["name"]?.jsonPrimitive?.content
+            }.joinToString(", ").takeIf { it.isNotEmpty() }
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    private fun extractAltTitles(element: JsonElement?): String? {
+        if (element == null) return null
+        return try {
+            element.jsonArray.mapNotNull {
+                it.jsonObject["title"]?.jsonPrimitive?.content
+                    ?: it.jsonObject["name"]?.jsonPrimitive?.content
+                    ?: it.jsonPrimitive.contentOrNull
             }.joinToString(", ").takeIf { it.isNotEmpty() }
         } catch (e: Exception) {
             null
@@ -361,7 +422,18 @@ class SenMangaItem(
 
         this.author = extractNames(this@SenMangaItem.author)
         this.artist = extractNames(this@SenMangaItem.artist)
-        this.description = this@SenMangaItem.description
+
+        val rawAltTitles = extractAltTitles(this@SenMangaItem.altTitles) ?: extractAltTitles(this@SenMangaItem.altTitlesFallback)
+        val baseDesc = this@SenMangaItem.description?.trim() ?: ""
+
+        // Append Alternate Titles to the very bottom of the base description
+        this.description = if (rawAltTitles.isNullOrBlank()) {
+            baseDesc
+        } else if (baseDesc.isBlank()) {
+            "=== Alternate Titles ===\n$rawAltTitles"
+        } else {
+            "$baseDesc\n\n=== Alternate Titles ===\n$rawAltTitles"
+        }
 
         val genreList = listOfNotNull(
             extractNames(this@SenMangaItem.genres),
