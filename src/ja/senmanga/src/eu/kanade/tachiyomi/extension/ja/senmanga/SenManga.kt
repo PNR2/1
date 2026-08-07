@@ -21,7 +21,10 @@ import kotlinx.coroutines.delay
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.decodeFromJsonElement
 import kotlinx.serialization.json.jsonArray
@@ -411,25 +414,26 @@ class SenMangaItem(
     private val released: JsonElement? = null,
     private val year: JsonElement? = null,
 ) {
-    private fun extractNames(element: JsonElement?): String? {
+    // Universal safety extractor: Handles nulls, primitives, array of primitives, and array of objects.
+    private fun extractData(element: JsonElement?): String? {
         if (element == null) return null
         return try {
-            element.jsonArray.mapNotNull {
-                it.jsonObject["name"]?.jsonPrimitive?.content
-            }.joinToString(", ").takeIf { it.isNotEmpty() }
-        } catch (e: Exception) {
-            null
-        }
-    }
-
-    private fun extractAltTitles(element: JsonElement?): String? {
-        if (element == null) return null
-        return try {
-            element.jsonArray.mapNotNull {
-                it.jsonObject["title"]?.jsonPrimitive?.content
-                    ?: it.jsonObject["name"]?.jsonPrimitive?.content
-                    ?: it.jsonPrimitive.contentOrNull
-            }.joinToString(", ").takeIf { it.isNotEmpty() }
+            when (element) {
+                is JsonPrimitive -> element.contentOrNull
+                is JsonArray -> {
+                    element.mapNotNull { item ->
+                        when (item) {
+                            is JsonPrimitive -> item.contentOrNull
+                            is JsonObject -> {
+                                item["name"]?.jsonPrimitive?.contentOrNull
+                                    ?: item["title"]?.jsonPrimitive?.contentOrNull
+                            }
+                            else -> null
+                        }
+                    }.joinToString(", ").takeIf { it.isNotBlank() }
+                }
+                else -> null
+            }
         } catch (e: Exception) {
             null
         }
@@ -442,10 +446,10 @@ class SenMangaItem(
         val rawCover = series?.cover256 ?: this@SenMangaItem.cover256 ?: series?.cover ?: this@SenMangaItem.cover ?: ""
         this.thumbnail_url = if (rawCover.isNotEmpty()) "$baseUrl/api/proxy?imageUrl=$rawCover" else ""
 
-        val rawAuthor = extractNames(this@SenMangaItem.author)
+        val rawAuthor = extractData(this@SenMangaItem.author)
         this.author = rawAuthor
 
-        val rawArtist = extractNames(this@SenMangaItem.artist)
+        val rawArtist = extractData(this@SenMangaItem.artist)
         this.artist = rawArtist
 
         // Compile Metadata
@@ -453,24 +457,24 @@ class SenMangaItem(
         if (!rawAuthor.isNullOrBlank()) metadataList.add("Author: $rawAuthor")
         if (!rawArtist.isNullOrBlank()) metadataList.add("Artist: $rawArtist")
 
-        val formatStr = extractNames(this@SenMangaItem.format) ?: this@SenMangaItem.format?.jsonPrimitive?.contentOrNull
+        val formatStr = extractData(this@SenMangaItem.format)
         if (!formatStr.isNullOrBlank()) metadataList.add("Format: $formatStr")
 
-        val demographicStr = extractNames(this@SenMangaItem.demographic) ?: this@SenMangaItem.demographic?.jsonPrimitive?.contentOrNull
+        val demographicStr = extractData(this@SenMangaItem.demographic)
         if (!demographicStr.isNullOrBlank()) metadataList.add("Demographic: $demographicStr")
 
-        val releaseStr = this@SenMangaItem.released?.jsonPrimitive?.contentOrNull ?: this@SenMangaItem.year?.jsonPrimitive?.contentOrNull
+        val releaseStr = extractData(this@SenMangaItem.released) ?: extractData(this@SenMangaItem.year)
         if (!releaseStr.isNullOrBlank()) metadataList.add("Released: $releaseStr")
 
-        val rawGenres = extractNames(this@SenMangaItem.genres)
+        val rawGenres = extractData(this@SenMangaItem.genres)
         if (!rawGenres.isNullOrBlank()) metadataList.add("Genres: $rawGenres")
 
-        val rawTags = extractNames(this@SenMangaItem.tags)
+        val rawTags = extractData(this@SenMangaItem.tags)
         if (!rawTags.isNullOrBlank()) metadataList.add("Tags: $rawTags")
 
         // Build Description block
         val baseDesc = this@SenMangaItem.description?.trim() ?: ""
-        val rawAltTitles = extractAltTitles(this@SenMangaItem.altTitles) ?: extractAltTitles(this@SenMangaItem.altTitlesFallback)
+        val rawAltTitles = extractData(this@SenMangaItem.altTitles) ?: extractData(this@SenMangaItem.altTitlesFallback)
 
         this.description = buildString {
             if (baseDesc.isNotBlank()) {
