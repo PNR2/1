@@ -444,7 +444,7 @@ class SenMangaItem(
 
         val rawAuthor = extractNames(this@SenMangaItem.author)
         this.author = rawAuthor
-        
+
         val rawArtist = extractNames(this@SenMangaItem.artist)
         this.artist = rawArtist
 
